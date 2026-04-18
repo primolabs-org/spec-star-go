@@ -1,11 +1,11 @@
 {
   "feature": "domain",
   "status": "in-progress",
-  "currentStep": "step-003",
+  "currentStep": "step-004",
   "steps": {
     "step-001": { "status": "completed", "title": "Go module initialization and project scaffolding" },
     "step-002": { "status": "completed", "title": "Domain error types and value objects" },
-    "step-003": { "status": "not-started", "title": "Domain entities" },
+    "step-003": { "status": "completed", "title": "Domain entities" },
     "step-004": { "status": "not-started", "title": "Repository port interfaces" },
     "step-005": { "status": "not-started", "title": "SQL migrations" },
     "step-006": { "status": "not-started", "title": "Platform database configuration" },
@@ -26,9 +26,14 @@
       "action": "step-002-completed",
       "timestamp": "2026-04-18T00:05:00-03:00",
       "detail": "Step 002 implemented and approved. Domain errors (ValidationError, ErrNotFound, ErrConcurrencyConflict, ErrDuplicate) and ProductType value object. 100% coverage."
+    },
+    {
+      "action": "step-003-completed",
+      "timestamp": "2026-04-18T00:10:00-03:00",
+      "detail": "Step 003 implemented and approved. Client, Asset, Position, ProcessedCommand entities with constructors, reconstitution, invariants, mutation methods. 52 tests, 100% coverage."
     }
   ],
-  "totalExecutionTime": "5m",
+  "totalExecutionTime": "10m",
   "startedAt": "2026-04-18T00:00:00-03:00",
-  "lastUpdatedAt": "2026-04-18T00:05:00-03:00"
+  "lastUpdatedAt": "2026-04-18T00:10:00-03:00"
 }
