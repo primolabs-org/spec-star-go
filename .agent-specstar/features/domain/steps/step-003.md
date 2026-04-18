@@ -14,8 +14,7 @@ Step 002 (domain error types and ProductType).
 
 ## Required Reads
 
-- `design.md` — "Domain Model" section for complete field lists, "Domain Invariants" section for enforcement rules, "Decimal Handling" section for `shopspring/decimal` usage, "Optimistic Concurrency" section for row_version semantics.
-- `clarifications.md` — `response_snapshot` is opaque `[]byte`, UUID generation uses `google/uuid`.
+- `design.md` — "Domain Model" section for complete field lists, "Domain Invariants" section for enforcement rules, "Decimal Handling" section for `shopspring/decimal` usage, "Optimistic Concurrency" section for row_version semantics, "Resolved Decisions" section for UUID generation and response_snapshot typing.
 - go-lambda-error-handling skill — domain errors are transport-agnostic, no logging in domain code.
 - specstar-clean-code skill — small focused functions, cognitive complexity <= 15.
 

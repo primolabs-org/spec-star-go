@@ -14,8 +14,7 @@ Step 001.
 
 ## Required Reads
 
-- `design.md` — "Domain Invariants", "Product Type Handling", "Optimistic Concurrency", and "Idempotency" sections for the error categories needed.
-- `clarifications.md` — confirmation that `response_snapshot` is opaque `[]byte`.
+- `design.md` — "Domain Invariants", "Product Type Handling", "Optimistic Concurrency", "Idempotency", and "Resolved Decisions" sections.
 - go-lambda-error-handling skill — domain error design rules.
 - specstar-clean-code skill — naming, cognitive complexity, function design.
 

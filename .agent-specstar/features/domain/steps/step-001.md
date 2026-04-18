@@ -14,8 +14,7 @@ None.
 
 ## Required Reads
 
-- `design.md` — "Constraints and Allowed Libraries" and "Connection Management" sections.
-- `clarifications.md` — open decisions on `shopspring/decimal` and `google/uuid` approval status.
+- `design.md` — "Constraints and Allowed Libraries", "Resolved Decisions", and "Connection Management" sections.
 
 ## In Scope
 
@@ -59,4 +58,4 @@ N/A — no testable logic.
 
 ## Escalation Conditions
 
-- If `shopspring/decimal` or `google/uuid` approval is not confirmed, escalate before proceeding. All subsequent steps assume these libraries are approved per clarifications.md.
+None. All library decisions are resolved in design.md "Resolved Decisions".
