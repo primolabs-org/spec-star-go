@@ -1,10 +1,10 @@
 {
   "feature": "domain",
   "status": "in-progress",
-  "currentStep": "step-002",
+  "currentStep": "step-003",
   "steps": {
     "step-001": { "status": "completed", "title": "Go module initialization and project scaffolding" },
-    "step-002": { "status": "not-started", "title": "Domain error types and value objects" },
+    "step-002": { "status": "completed", "title": "Domain error types and value objects" },
     "step-003": { "status": "not-started", "title": "Domain entities" },
     "step-004": { "status": "not-started", "title": "Repository port interfaces" },
     "step-005": { "status": "not-started", "title": "SQL migrations" },
@@ -21,9 +21,14 @@
       "action": "step-001-completed",
       "timestamp": "2026-04-18T00:02:00-03:00",
       "detail": "Step 001 implemented and approved. go.mod, go.sum, cmd/http-lambda/main.go created. go build and go vet pass."
+    },
+    {
+      "action": "step-002-completed",
+      "timestamp": "2026-04-18T00:05:00-03:00",
+      "detail": "Step 002 implemented and approved. Domain errors (ValidationError, ErrNotFound, ErrConcurrencyConflict, ErrDuplicate) and ProductType value object. 100% coverage."
     }
   ],
-  "totalExecutionTime": "2m",
+  "totalExecutionTime": "5m",
   "startedAt": "2026-04-18T00:00:00-03:00",
-  "lastUpdatedAt": "2026-04-18T00:02:00-03:00"
+  "lastUpdatedAt": "2026-04-18T00:05:00-03:00"
 }
