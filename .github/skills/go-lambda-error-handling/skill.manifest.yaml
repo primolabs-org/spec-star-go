@@ -1,0 +1,66 @@
+name: go-lambda-error-handling
+version: 0.1.0
+kind: skill
+summary: Go AWS Lambda error-handling workflow for hexagonal microservices with HTTP API and SQS adapters.
+owner: specstar
+applies_to:
+  languages: [go]
+  runtimes: [aws-lambda]
+  triggers: [api-gateway-http-api, sqs]
+  architectures: [hexagonal]
+relationship:
+  specializes:
+    - go-aws-lambda-microservice-hexagonal
+recommended_with:
+  instructions:
+    - cleanup.instructions.md
+    - fail-fast.instructions.md
+    - testing.instructions.md
+    - error-handling.instructions.md
+  future_skills:
+    - go-lambda-structured-logging
+    - go-lambda-observability
+routing_hints:
+  manual_keywords:
+    - error handling
+    - wrap errors
+    - errors.Is
+    - errors.As
+    - http error mapping
+    - sqs partial batch failure
+    - retryable error
+    - terminal error
+    - idempotency
+  should_trigger_when:
+    - task changes error propagation, wrapping, mapping, classification, retries, or batch failure behavior
+    - task adds or modifies HTTP or SQS inbound adapters
+    - task introduces or fixes boundary translation between domain/application and adapters
+constraints:
+  must:
+    - use explicit error returns for ordinary failure paths
+    - preserve causes using fmt.Errorf with %w when adding context
+    - keep HTTP mapping in inbound HTTP adapter
+    - keep SQS partial batch behavior in inbound SQS adapter
+  should:
+    - prefer stdlib errors facilities
+    - keep panic recovery narrow and edge-only if present
+  must_not:
+    - swallow errors
+    - branch on error strings for control flow
+    - use panic for normal business errors
+    - return raw Lambda errors for expected HTTP client-facing failures
+    - throw whole-batch failures in SQS partial-batch mode for per-record expected failures
+dependency_policy:
+  default_preference:
+    - go_standard_library
+    - github.com/aws/aws-lambda-go
+  require_explicit_prompt_for:
+    - third_party_error_packages
+    - new_retry_frameworks
+    - panic_recovery_frameworks
+required_checks:
+  - go test ./...
+artifacts_expected:
+  - updated error classification and mapping code
+  - tests covering changed error paths
+  - session summary if repository conventions require it

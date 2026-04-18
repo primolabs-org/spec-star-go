@@ -1,0 +1,62 @@
+name: go-aws-lambda-microservice-hexagonal
+version: 0.1.0
+kind: skill
+summary: >-
+  Build or modify a Go microservice running on AWS Lambda using hexagonal
+  architecture, with inbound adapters for API Gateway HTTP API and/or Amazon SQS.
+owners:
+  - specstar
+applies_to:
+  languages: [go]
+  platforms: [aws-lambda, api-gateway-http-api, sqs]
+  architectures: [hexagonal, ports-and-adapters]
+trigger_hints:
+  - go lambda microservice
+  - aws lambda go http api
+  - aws lambda go sqs consumer
+  - build lambda microservice in go
+  - add sqs trigger to go lambda service
+  - add http trigger to go lambda service
+entry_modes:
+  - http
+  - sqs
+recommended_instructions:
+  - cleanup.instructions.md
+  - fail-fast.instructions.md
+  - testing.instructions.md
+  - error-handling.instructions.md
+  - logging.instructions.md
+  - observability.instructions.md
+constraints:
+  - Keep Lambda handlers thin and transport-specific.
+  - Keep domain and application layers transport-agnostic.
+  - Keep AWS SDK clients and integrations behind outbound adapters.
+  - Prefer provided.al2023 for Go Lambda runtimes.
+  - Prefer API Gateway HTTP API unless REST-only features are explicitly required.
+  - SQS consumers must be idempotent and support partial batch response.
+  - Do not use Lambda layers for Go application dependencies.
+artifacts_required:
+  - architecture note describing trigger flow and key ports/adapters
+  - changed-files summary
+  - tests for domain/application changes
+  - trigger-specific adapter tests when HTTP or SQS is touched
+examples:
+  - examples/http
+  - examples/sqs
+  - examples/shared
+dependency_policy:
+  default_preference:
+    - go_standard_library
+    - aws_sdk_go_v2
+  allowed_common:
+    - github.com/aws/aws-lambda-go
+    - github.com/aws/aws-sdk-go-v2
+  discouraged:
+    - heavyweight_http_frameworks
+    - broad_di_frameworks
+    - lambda_dependency_layers_for_go_code
+  require_explicit_prompt_for:
+    - new_logging_library
+    - new_observability_framework
+    - new_assertion_framework
+    - new_mocking_framework

@@ -1,0 +1,64 @@
+name: go-lambda-structured-logging
+version: 0.1.0
+kind: skill
+summary: Go AWS Lambda structured logging workflow for hexagonal microservices with HTTP API and SQS adapters.
+owner: specstar
+applies_to:
+  languages: [go]
+  runtimes: [aws-lambda]
+  triggers: [api-gateway-http-api, sqs]
+  architectures: [hexagonal]
+relationship:
+  specializes:
+    - go-aws-lambda-microservice-hexagonal
+recommended_with:
+  instructions:
+    - cleanup.instructions.md
+    - fail-fast.instructions.md
+    - testing.instructions.md
+    - logging.instructions.md
+  adjacent_skills:
+    - go-lambda-error-handling
+    - go-lambda-observability
+routing_hints:
+  manual_keywords:
+    - structured logging
+    - slog
+    - lambda json logs
+    - request id
+    - message id
+    - correlation fields
+    - log levels
+    - cloudwatch logs
+  should_trigger_when:
+    - task changes logger construction, output format, field names, or level policy
+    - task adds or modifies HTTP or SQS adapters and needs correlation enrichment
+    - task adds or removes boundary-level failure logging
+constraints:
+  must:
+    - prefer structured logging
+    - centralize logger bootstrap
+    - keep stable correlation fields in inbound adapters
+    - keep sensitive values out of logs
+  should:
+    - prefer log/slog and JSON output
+    - keep field names stable and lowercase
+  must_not:
+    - log secrets or full sensitive payloads
+    - build JSON log strings manually
+    - duplicate terminal failure logs at every layer
+    - leave temporary debug logging in touched production paths
+dependency_policy:
+  default_preference:
+    - go_standard_library
+    - github.com/aws/aws-lambda-go
+  require_explicit_prompt_for:
+    - third_party_logging_frameworks
+    - custom_lambda_logging_wrappers
+    - new_redaction_frameworks
+required_checks:
+  - go test ./...
+artifacts_expected:
+  - updated logger bootstrap or adapter enrichment code
+  - tests covering changed logging behavior where contractual
+  - session summary if repository conventions require it

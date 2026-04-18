@@ -1,0 +1,70 @@
+name: go-lambda-observability-otel
+version: 0.1.0
+kind: skill
+summary: Go AWS Lambda OpenTelemetry workflow for traces, metrics, and correlation in hexagonal microservices with HTTP API and SQS adapters.
+owner: specstar
+applies_to:
+  languages: [go]
+  runtimes: [aws-lambda]
+  triggers: [api-gateway-http-api, sqs]
+  architectures: [hexagonal]
+relationship:
+  specializes:
+    - go-aws-lambda-microservice-hexagonal
+recommended_with:
+  instructions:
+    - cleanup.instructions.md
+    - fail-fast.instructions.md
+    - testing.instructions.md
+    - observability.instructions.md
+  adjacent_skills:
+    - go-lambda-structured-logging
+    - go-lambda-error-handling
+routing_hints:
+  manual_keywords:
+    - opentelemetry
+    - otel
+    - adot
+    - traces
+    - metrics
+    - propagation
+    - tracerprovider
+    - meterprovider
+    - lambda telemetry
+    - otlp
+  should_trigger_when:
+    - task adds or modifies tracing, metrics, or telemetry bootstrap
+    - task instruments HTTP or SQS adapters for correlation and spans
+    - task instruments AWS SDK v2 clients or other important outbound dependencies
+    - task needs vendor-neutral telemetry that can be exported to different backends
+constraints:
+  must:
+    - centralize provider bootstrap
+    - keep backend-specific exporter details out of domain and application layers
+    - preserve useful request or message correlation context
+    - keep signal names and attributes stable and low-cardinality
+  should:
+    - prefer explicit OpenTelemetry SDK wiring
+    - prefer AWS-supported Lambda and AWS SDK v2 integrations where appropriate
+  must_not:
+    - leak secrets or full sensitive payloads into telemetry
+    - create high-cardinality metric labels or unstable span names
+    - replace structured logging policy with experimental OTel log pipelines by default
+    - instantiate ad hoc providers throughout the codebase
+dependency_policy:
+  default_preference:
+    - go_standard_library
+    - github.com/aws/aws-lambda-go
+    - go.opentelemetry.io/otel
+    - github.com/aws/aws-sdk-go-v2
+  require_explicit_prompt_for:
+    - additional_observability_facades
+    - vendor_specific_app_instrumentation_sdk
+    - experimental_otel_logs_pipeline
+required_checks:
+  - go test ./...
+artifacts_expected:
+  - updated telemetry bootstrap or provider wiring
+  - updated instrumentation at meaningful inbound or outbound boundaries
+  - tests covering changed propagation or instrumentation behavior where contractual
+  - session summary if repository conventions require it
