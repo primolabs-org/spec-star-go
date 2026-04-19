@@ -1,10 +1,10 @@
 {
   "feature": "local-env-fixes",
-  "status": "ready-for-implementation",
+  "status": "in-progress",
   "current_phase": "execution",
   "current_step": "step-001",
   "steps": {
-    "step-001": { "status": "pending", "outcome": "" },
+    "step-001": { "status": "in-progress", "outcome": "" },
     "step-002": { "status": "pending", "outcome": "" },
     "step-003": { "status": "pending", "outcome": "" },
     "step-004": { "status": "pending", "outcome": "" }
@@ -14,13 +14,30 @@
       "step": "design",
       "action": "created",
       "timestamp": "2026-04-19 00:00:00"
+    },
+    {
+      "step": "step-001",
+      "action": "engineer-started",
+      "timestamp": "2026-04-19T14:00:00-03:00"
+    },
+    {
+      "step": "step-001",
+      "action": "review-rejected",
+      "timestamp": "2026-04-19T14:05:00-03:00",
+      "detail": "AGENTS.md modified out of scope; .golangci.yml untracked"
+    },
+    {
+      "step": "step-001-fix",
+      "action": "coordinator-fix-applied",
+      "timestamp": "2026-04-19T14:06:00-03:00",
+      "detail": "Reverted AGENTS.md; golangci.yml content verified correct"
     }
   ],
-  "last_actor": "SpecStar Manager",
-  "last_artifact": ".agent-specstar\\features\\local-env-fixes\\design.md",
+  "last_actor": "SpecStar Coordinator",
+  "last_artifact": ".agent-specstar\\features\\local-env-fixes\\reviews\\step-001-review.md",
   "blocked": false,
   "requires_user_input": false,
   "clarifications_open": false,
-  "updated_at": "2026-04-19 00:00:00",
+  "updated_at": "2026-04-19T14:00:00-03:00",
   "total_execution_time": "0m"
 }
