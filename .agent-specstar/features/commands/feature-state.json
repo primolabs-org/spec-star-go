@@ -1,9 +1,9 @@
 {
   "feature": "commands",
   "status": "in-progress",
-  "currentStep": "step-003",
+  "currentStep": "step-004",
   "startedAt": "2026-04-18T22:45:53-03:00",
-  "updatedAt": "2026-04-18T22:59:19-03:00",
+  "updatedAt": "2026-04-18T23:07:30-03:00",
   "completedAt": null,
   "steps": {
     "step-001": {
@@ -22,10 +22,10 @@
     },
     "step-003": {
       "title": "Inbound HTTP handler adapter",
-      "status": "not-started",
-      "startedAt": null,
-      "completedAt": null,
-      "attempts": 0
+      "status": "completed",
+      "startedAt": "2026-04-18T22:59:19-03:00",
+      "completedAt": "2026-04-18T23:07:30-03:00",
+      "attempts": 2
     },
     "step-004": {
       "title": "Lambda bootstrap wiring",
@@ -50,6 +50,16 @@
       "timestamp": "2026-04-18T22:59:19-03:00",
       "action": "step-002-completed",
       "detail": "DepositService with 27 tests, 100% coverage. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:04:00-03:00",
+      "action": "step-003-rejected",
+      "detail": "json.Marshal error silently discarded in jsonResponse. Fix-001 created."
+    },
+    {
+      "timestamp": "2026-04-18T23:07:30-03:00",
+      "action": "step-003-completed",
+      "detail": "DepositHandler with 11 tests, 100% coverage. Fix-001 applied and approved."
     }
   ]
 }
