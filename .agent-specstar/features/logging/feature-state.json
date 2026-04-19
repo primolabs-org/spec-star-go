@@ -1,0 +1,36 @@
+{
+  "feature": "logging",
+  "status": "in-progress",
+  "current_phase": "implementation",
+  "current_step": "step-002",
+  "steps": {
+    "step-001": { "status": "completed", "outcome": "approved" },
+    "step-002": { "status": "not-started", "outcome": null },
+    "step-003": { "status": "not-started", "outcome": null },
+    "step-004": { "status": "not-started", "outcome": null }
+  },
+  "history": [
+    {
+      "step": "planning",
+      "action": "state-created",
+      "timestamp": "2026-04-19T12:00:00-03:00"
+    },
+    {
+      "step": "step-001",
+      "action": "engineer-completed",
+      "timestamp": "2026-04-19T12:05:00-03:00"
+    },
+    {
+      "step": "step-001",
+      "action": "approved",
+      "timestamp": "2026-04-19T12:08:00-03:00"
+    }
+  ],
+  "last_actor": "SpecStar Coordinator",
+  "last_artifact": ".agent-specstar/features/logging/reviews/step-001-review.md",
+  "blocked": false,
+  "requires_user_input": false,
+  "clarifications_open": false,
+  "updated_at": "2026-04-19T12:08:00-03:00",
+  "total_execution_time": "8m"
+}
