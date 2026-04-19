@@ -1,0 +1,21 @@
+{
+  "feature": "withdraw",
+  "status": "draft",
+  "current_phase": "design",
+  "current_step": null,
+  "steps": {},
+  "history": [
+    {
+      "step": "design",
+      "action": "created",
+      "timestamp": "2026-04-19 12:00:00"
+    }
+  ],
+  "last_actor": "SpecStar Manager",
+  "last_artifact": ".agent-specstar/features/withdraw/design.md",
+  "blocked": false,
+  "requires_user_input": false,
+  "clarifications_open": false,
+  "updated_at": "2026-04-19 12:00:00",
+  "total_execution_time": ""
+}
