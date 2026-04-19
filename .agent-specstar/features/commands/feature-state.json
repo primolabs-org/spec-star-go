@@ -1,10 +1,10 @@
 {
   "feature": "commands",
-  "status": "in-progress",
-  "currentStep": "step-004",
+  "status": "completed",
+  "currentStep": null,
   "startedAt": "2026-04-18T22:45:53-03:00",
-  "updatedAt": "2026-04-18T23:07:30-03:00",
-  "completedAt": null,
+  "updatedAt": "2026-04-18T23:11:05-03:00",
+  "completedAt": "2026-04-18T23:11:05-03:00",
   "steps": {
     "step-001": {
       "title": "Add aws-lambda-go dependency",
@@ -29,10 +29,10 @@
     },
     "step-004": {
       "title": "Lambda bootstrap wiring",
-      "status": "not-started",
-      "startedAt": null,
-      "completedAt": null,
-      "attempts": 0
+      "status": "completed",
+      "startedAt": "2026-04-18T23:07:30-03:00",
+      "completedAt": "2026-04-18T23:11:05-03:00",
+      "attempts": 1
     }
   },
   "history": [
@@ -60,6 +60,16 @@
       "timestamp": "2026-04-18T23:07:30-03:00",
       "action": "step-003-completed",
       "detail": "DepositHandler with 11 tests, 100% coverage. Fix-001 applied and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:11:05-03:00",
+      "action": "step-004-completed",
+      "detail": "Lambda bootstrap wiring in main.go. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:11:05-03:00",
+      "action": "feature-completed",
+      "detail": "All 4 steps completed. Deposit command feature fully implemented."
     }
   ]
 }
