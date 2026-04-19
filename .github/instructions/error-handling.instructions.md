@@ -30,6 +30,13 @@ Follow these rules when implementing, modifying, or reviewing code in this repos
 - Convert internal failures into boundary-appropriate errors only when required by the active interface or design.
 - Keep domain errors, validation errors, infrastructure failures, and unexpected failures distinguishable.
 
+## Unreachable error discipline
+
+- Propagate errors even when current preconditions make them provably unreachable.
+- Preconditions change; error handling must remain correct independent of caller assumptions.
+- Do not use `_ =` to discard error returns. Every error return must be checked.
+- A comment explaining why an error "cannot happen" does not justify discarding it.
+
 ## Forbidden behavior
 
 - Do not swallow exceptions, errors, or failed results.
@@ -40,6 +47,7 @@ Follow these rules when implementing, modifying, or reviewing code in this repos
 - Do not duplicate error handling in multiple layers when one clear owner is sufficient.
 - Do not hide the root cause by replacing an error with a vague generic message without preserving context.
 - Do not treat logging alone as error handling.
+- **Don't ever discard errors at any circumstance.** Even though it might seem like its justfiable at the current moment, it will leave traps after refactors and future changes.
 
 ## Recovery policy
 

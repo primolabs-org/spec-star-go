@@ -12,6 +12,13 @@ Follow these rules when implementing, modifying, or reviewing code in this repos
 - Do not hide invalid state, missing data, misconfiguration, or contract violations.
 - Surface problems at the point they are detected instead of masking them and continuing silently.
 
+## Unreachable error discipline
+
+- Propagate errors even when current preconditions make them provably unreachable.
+- Preconditions change; error handling must remain correct independent of caller assumptions.
+- Do not use `_ =` to discard error returns. Every error return must be checked.
+- A comment explaining why an error "cannot happen" does not justify discarding it.
+
 ## Forbidden behaviors
 
 - Do not add silent fallbacks.
@@ -20,6 +27,7 @@ Follow these rules when implementing, modifying, or reviewing code in this repos
 - Do not swallow exceptions, errors, or failed validations.
 - Do not return placeholder values that make broken behavior appear valid.
 - Do not preserve broken legacy paths unless the task explicitly requires compatibility behavior.
+- **Don't ever discard errors at any circumstance.** Even though it might seem like its justfiable at the current moment, it will leave traps after refactors and future changes.
 
 ## Required behaviors
 
