@@ -1,0 +1,14 @@
+.git/
+.github/
+.agent-specstar/
+coverage.html
+local-env/
+e2e-test.sh
+README.md
+docker-compose.yml
+.env*
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
