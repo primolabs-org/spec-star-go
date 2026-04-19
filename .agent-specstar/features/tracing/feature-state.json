@@ -1,0 +1,34 @@
+{
+  "feature": "tracing",
+  "status": "designed",
+  "current_phase": "ready-for-execution",
+  "current_step": "step-001",
+  "steps": {
+    "step-001": { "status": "pending", "outcome": null },
+    "step-002": { "status": "pending", "outcome": null },
+    "step-003": { "status": "pending", "outcome": null },
+    "step-004": { "status": "pending", "outcome": null },
+    "step-005": { "status": "pending", "outcome": null },
+    "step-006": { "status": "pending", "outcome": null },
+    "step-007": { "status": "pending", "outcome": null }
+  },
+  "history": [
+    {
+      "step": "design",
+      "action": "created",
+      "timestamp": "2026-04-19 12:00:00"
+    },
+    {
+      "step": "steps",
+      "action": "generated",
+      "timestamp": "2026-04-19 12:00:00"
+    }
+  ],
+  "last_actor": "SpecStar Manager",
+  "last_artifact": ".agent-specstar/features/tracing/steps/step-007.md",
+  "blocked": false,
+  "requires_user_input": false,
+  "clarifications_open": false,
+  "updated_at": "2026-04-19 12:00:00",
+  "total_execution_time": null
+}
