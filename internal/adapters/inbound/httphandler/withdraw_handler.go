@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/primolabs-org/spec-star-go/internal/application"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 )
 
 type withdrawExecutor interface {
@@ -18,11 +19,12 @@ type withdrawExecutor interface {
 // WithdrawHandler maps API Gateway HTTP API v2 events to WithdrawService.
 type WithdrawHandler struct {
 	service withdrawExecutor
+	loggers loggerFactory
 }
 
 // NewWithdrawHandler constructs a WithdrawHandler.
-func NewWithdrawHandler(service withdrawExecutor) *WithdrawHandler {
-	return &WithdrawHandler{service: service}
+func NewWithdrawHandler(service withdrawExecutor, loggers loggerFactory) *WithdrawHandler {
+	return &WithdrawHandler{service: service, loggers: loggers}
 }
 
 // Handle processes an API Gateway HTTP API v2 request.
@@ -36,8 +38,12 @@ func (h *WithdrawHandler) Handle(ctx context.Context, req events.APIGatewayV2HTT
 		return errorResponse(http.StatusUnprocessableEntity, "invalid request body")
 	}
 
+	logger := h.loggers.FromContext(ctx, "http", "withdraw")
+	ctx = platform.WithLogger(ctx, logger)
+
 	resp, statusCode, err := h.service.Execute(ctx, withdrawReq)
 	if err != nil {
+		logTerminalError(logger, statusCode, err)
 		if errors.Is(err, domain.ErrInsufficientPosition) {
 			return codedErrorResponse(statusCode, err.Error(), "INSUFFICIENT_POSITION")
 		}

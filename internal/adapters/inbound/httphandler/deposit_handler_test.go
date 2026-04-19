@@ -1,14 +1,17 @@
 package httphandler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/primolabs-org/spec-star-go/internal/application"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 )
 
 type mockDepositExecutor struct {
@@ -16,11 +19,39 @@ type mockDepositExecutor struct {
 	statusCode int
 	err        error
 	captured   application.DepositRequest
+	capturedCtx context.Context
 }
 
-func (m *mockDepositExecutor) Execute(_ context.Context, req application.DepositRequest) (*application.DepositResponse, int, error) {
+func (m *mockDepositExecutor) Execute(ctx context.Context, req application.DepositRequest) (*application.DepositResponse, int, error) {
 	m.captured = req
+	m.capturedCtx = ctx
 	return m.resp, m.statusCode, m.err
+}
+
+type mockLoggerFactory struct {
+	buf *bytes.Buffer
+}
+
+func newMockLoggerFactory() *mockLoggerFactory {
+	return &mockLoggerFactory{buf: &bytes.Buffer{}}
+}
+
+func (m *mockLoggerFactory) FromContext(_ context.Context, trigger, operation string) *slog.Logger {
+	handler := slog.NewJSONHandler(m.buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	return slog.New(handler).With("trigger", trigger, "operation", operation)
+}
+
+func (m *mockLoggerFactory) parseLastEntry(t *testing.T) map[string]any {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(m.buf.Bytes()), []byte("\n"))
+	if len(lines) == 0 || len(lines[0]) == 0 {
+		t.Fatal("no log entries found")
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(lines[len(lines)-1], &entry); err != nil {
+		t.Fatalf("invalid JSON log line: %v\nraw: %s", err, lines[len(lines)-1])
+	}
+	return entry
 }
 
 func validBody() string {
@@ -60,7 +91,7 @@ func TestHandle_ValidPost_DelegatesToExecute(t *testing.T) {
 		},
 		statusCode: http.StatusCreated,
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -88,7 +119,7 @@ func TestHandle_ValidPost_DelegatesToExecute(t *testing.T) {
 
 func TestHandle_NonPostMethods_Returns405(t *testing.T) {
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
-	handler := NewDepositHandler(&mockDepositExecutor{})
+	handler := NewDepositHandler(&mockDepositExecutor{}, newMockLoggerFactory())
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
@@ -106,7 +137,7 @@ func TestHandle_NonPostMethods_Returns405(t *testing.T) {
 }
 
 func TestHandle_MalformedJSON_Returns422(t *testing.T) {
-	handler := NewDepositHandler(&mockDepositExecutor{})
+	handler := NewDepositHandler(&mockDepositExecutor{}, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest("{invalid"))
 
@@ -124,7 +155,7 @@ func TestHandle_ExecuteReturns201_Success(t *testing.T) {
 		resp:       &application.DepositResponse{PositionID: "p1", CreatedAt: "2026-01-01T00:00:00Z"},
 		statusCode: http.StatusCreated,
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -149,7 +180,7 @@ func TestHandle_ExecuteReturns200_IdempotentReplay(t *testing.T) {
 		resp:       &application.DepositResponse{PositionID: "p2"},
 		statusCode: http.StatusOK,
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -174,7 +205,7 @@ func TestHandle_ExecuteReturns422_ValidationError(t *testing.T) {
 		statusCode: http.StatusUnprocessableEntity,
 		err:        errors.New("amount must be positive"),
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -192,7 +223,7 @@ func TestHandle_ExecuteReturns409_ConflictError(t *testing.T) {
 		statusCode: http.StatusConflict,
 		err:        errors.New("replay after race: not found"),
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -210,7 +241,7 @@ func TestHandle_ExecuteReturns500_InternalError(t *testing.T) {
 		statusCode: http.StatusInternalServerError,
 		err:        errors.New("unit of work: connection refused"),
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -259,7 +290,7 @@ func TestHandle_AllResponses_HaveContentTypeJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewDepositHandler(tt.mock)
+			handler := NewDepositHandler(tt.mock, newMockLoggerFactory())
 			resp, err := handler.Handle(context.Background(), tt.req)
 
 			if err != nil {
@@ -275,7 +306,7 @@ func TestHandle_AllResponses_HaveContentTypeJSON(t *testing.T) {
 
 func TestHandle_ReadsMethodFromRequestContextHTTP(t *testing.T) {
 	mock := &mockDepositExecutor{}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	req := events.APIGatewayV2HTTPRequest{
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
@@ -306,7 +337,7 @@ func TestHandle_MarshalFailure_ReturnsError(t *testing.T) {
 		resp:       &application.DepositResponse{PositionID: "p1"},
 		statusCode: http.StatusCreated,
 	}
-	handler := NewDepositHandler(mock)
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
 
 	_, err := handler.Handle(context.Background(), postRequest(validBody()))
 
@@ -330,5 +361,87 @@ func assertErrorBody(t *testing.T, body string, expectedMsg string) {
 	}
 	if parsed["error"] != expectedMsg {
 		t.Fatalf("expected error %q, got %q", expectedMsg, parsed["error"])
+	}
+}
+
+func TestHandle_ExecuteReturns500_LogsErrorLevel(t *testing.T) {
+	logFactory := newMockLoggerFactory()
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewDepositHandler(mock, logFactory)
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+
+	entry := logFactory.parseLastEntry(t)
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("expected status 500, got %v", entry["status"])
+	}
+	if entry["error"] != "db connection lost" {
+		t.Errorf("expected error 'db connection lost', got %v", entry["error"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
+	}
+}
+
+func TestHandle_ExecuteReturns4xx_LogsWarnLevel(t *testing.T) {
+	logFactory := newMockLoggerFactory()
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusUnprocessableEntity,
+		err:        errors.New("amount must be positive"),
+	}
+	handler := NewDepositHandler(mock, logFactory)
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d", resp.StatusCode)
+	}
+
+	entry := logFactory.parseLastEntry(t)
+	if entry["level"] != "WARN" {
+		t.Errorf("expected level WARN, got %v", entry["level"])
+	}
+	if entry["status"] != float64(http.StatusUnprocessableEntity) {
+		t.Errorf("expected status 422, got %v", entry["status"])
+	}
+	if entry["error"] != "amount must be positive" {
+		t.Errorf("expected error 'amount must be positive', got %v", entry["error"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
+	}
+}
+
+func TestHandle_ServiceExecute_ReceivesContextWithLogger(t *testing.T) {
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p1"},
+		statusCode: http.StatusCreated,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	logger := platform.LoggerFromContext(mock.capturedCtx)
+	if logger == slog.Default() {
+		t.Fatal("expected enriched logger in context, got slog.Default()")
 	}
 }

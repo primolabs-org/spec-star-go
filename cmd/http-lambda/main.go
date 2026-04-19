@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -13,14 +14,18 @@ import (
 )
 
 func main() {
+	loggers := platform.NewLoggerFactory("spec-star", slog.LevelInfo)
+
 	cfg, err := platform.LoadDatabaseConfig()
 	if err != nil {
-		log.Fatalf("loading database config: %v", err)
+		slog.Error("loading database config", "error", err)
+		os.Exit(1)
 	}
 
 	pool, err := platform.NewPool(context.Background(), cfg)
 	if err != nil {
-		log.Fatalf("creating database pool: %v", err)
+		slog.Error("creating database pool", "error", err)
+		os.Exit(1)
 	}
 
 	clients := postgres.NewClientRepository(pool)
@@ -30,10 +35,10 @@ func main() {
 	unitOfWork := postgres.NewTransactionRunner(pool)
 
 	depositService := application.NewDepositService(clients, assets, positions, processedCommands, unitOfWork)
-	depositHandler := httphandler.NewDepositHandler(depositService)
+	depositHandler := httphandler.NewDepositHandler(depositService, loggers)
 
 	withdrawService := application.NewWithdrawService(clients, positions, processedCommands, unitOfWork)
-	withdrawHandler := httphandler.NewWithdrawHandler(withdrawService)
+	withdrawHandler := httphandler.NewWithdrawHandler(withdrawService, loggers)
 
 	lambda.Start(func(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 		switch req.RequestContext.HTTP.Path {

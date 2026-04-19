@@ -5,23 +5,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/primolabs-org/spec-star-go/internal/application"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 )
 
 type mockWithdrawExecutor struct {
-	resp       *application.WithdrawResponse
-	statusCode int
-	err        error
-	captured   application.WithdrawRequest
+	resp        *application.WithdrawResponse
+	statusCode  int
+	err         error
+	captured    application.WithdrawRequest
+	capturedCtx context.Context
 }
 
-func (m *mockWithdrawExecutor) Execute(_ context.Context, req application.WithdrawRequest) (*application.WithdrawResponse, int, error) {
+func (m *mockWithdrawExecutor) Execute(ctx context.Context, req application.WithdrawRequest) (*application.WithdrawResponse, int, error) {
 	m.captured = req
+	m.capturedCtx = ctx
 	return m.resp, m.statusCode, m.err
 }
 
@@ -66,7 +70,7 @@ func TestWithdrawHandle_SuccessfulRequest_Returns200(t *testing.T) {
 		},
 		statusCode: http.StatusOK,
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -94,7 +98,7 @@ func TestWithdrawHandle_SuccessfulRequest_Returns200(t *testing.T) {
 
 func TestWithdrawHandle_NonPostMethods_Returns405(t *testing.T) {
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
-	handler := NewWithdrawHandler(&mockWithdrawExecutor{})
+	handler := NewWithdrawHandler(&mockWithdrawExecutor{}, newMockLoggerFactory())
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
@@ -112,7 +116,7 @@ func TestWithdrawHandle_NonPostMethods_Returns405(t *testing.T) {
 }
 
 func TestWithdrawHandle_InvalidJSONBody_Returns422(t *testing.T) {
-	handler := NewWithdrawHandler(&mockWithdrawExecutor{})
+	handler := NewWithdrawHandler(&mockWithdrawExecutor{}, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest("{invalid"))
 
@@ -130,7 +134,7 @@ func TestWithdrawHandle_ServiceReturns422_ValidationError(t *testing.T) {
 		statusCode: http.StatusUnprocessableEntity,
 		err:        errors.New("desired_value must be positive"),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -148,7 +152,7 @@ func TestWithdrawHandle_ServiceReturns404_NotFound(t *testing.T) {
 		statusCode: http.StatusNotFound,
 		err:        errors.New("client not found"),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -176,7 +180,7 @@ func TestWithdrawHandle_ServiceReturns409_ErrInsufficientPosition(t *testing.T) 
 		statusCode: http.StatusConflict,
 		err:        fmt.Errorf("total available 100 less than desired 500: %w", domain.ErrInsufficientPosition),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -204,7 +208,7 @@ func TestWithdrawHandle_ServiceReturns409_ErrConcurrencyConflict(t *testing.T) {
 		statusCode: http.StatusConflict,
 		err:        fmt.Errorf("position version mismatch: %w", domain.ErrConcurrencyConflict),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -232,7 +236,7 @@ func TestWithdrawHandle_ServiceReturns409_NoRecognizedSentinel(t *testing.T) {
 		statusCode: http.StatusConflict,
 		err:        errors.New("replay after race: not found"),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -260,7 +264,7 @@ func TestWithdrawHandle_ServiceReturns500_InternalError(t *testing.T) {
 		statusCode: http.StatusInternalServerError,
 		err:        errors.New("unit of work: connection refused"),
 	}
-	handler := NewWithdrawHandler(mock)
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
 
 	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
 
@@ -317,7 +321,7 @@ func TestWithdrawHandle_AllResponses_HaveContentTypeJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewWithdrawHandler(tt.mock)
+			handler := NewWithdrawHandler(tt.mock, newMockLoggerFactory())
 			resp, err := handler.Handle(context.Background(), tt.req)
 
 			if err != nil {
@@ -328,5 +332,113 @@ func TestWithdrawHandle_AllResponses_HaveContentTypeJSON(t *testing.T) {
 				t.Fatalf("expected Content-Type application/json, got %s", ct)
 			}
 		})
+	}
+}
+
+func TestWithdrawHandle_ServiceReturns500_LogsErrorLevel(t *testing.T) {
+	logFactory := newMockLoggerFactory()
+	mock := &mockWithdrawExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewWithdrawHandler(mock, logFactory)
+
+	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+
+	entry := logFactory.parseLastEntry(t)
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("expected status 500, got %v", entry["status"])
+	}
+	if entry["error"] != "db connection lost" {
+		t.Errorf("expected error 'db connection lost', got %v", entry["error"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
+	}
+}
+
+func TestWithdrawHandle_ErrInsufficientPosition_LogsWarnLevel(t *testing.T) {
+	logFactory := newMockLoggerFactory()
+	mock := &mockWithdrawExecutor{
+		statusCode: http.StatusConflict,
+		err:        fmt.Errorf("total available 100 less than desired 500: %w", domain.ErrInsufficientPosition),
+	}
+	handler := NewWithdrawHandler(mock, logFactory)
+
+	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", resp.StatusCode)
+	}
+
+	entry := logFactory.parseLastEntry(t)
+	if entry["level"] != "WARN" {
+		t.Errorf("expected level WARN, got %v", entry["level"])
+	}
+	if entry["status"] != float64(http.StatusConflict) {
+		t.Errorf("expected status 409, got %v", entry["status"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
+	}
+}
+
+func TestWithdrawHandle_ErrConcurrencyConflict_LogsWarnLevel(t *testing.T) {
+	logFactory := newMockLoggerFactory()
+	mock := &mockWithdrawExecutor{
+		statusCode: http.StatusConflict,
+		err:        fmt.Errorf("position version mismatch: %w", domain.ErrConcurrencyConflict),
+	}
+	handler := NewWithdrawHandler(mock, logFactory)
+
+	resp, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", resp.StatusCode)
+	}
+
+	entry := logFactory.parseLastEntry(t)
+	if entry["level"] != "WARN" {
+		t.Errorf("expected level WARN, got %v", entry["level"])
+	}
+	if entry["status"] != float64(http.StatusConflict) {
+		t.Errorf("expected status 409, got %v", entry["status"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
+	}
+}
+
+func TestWithdrawHandle_ServiceExecute_ReceivesContextWithLogger(t *testing.T) {
+	mock := &mockWithdrawExecutor{
+		resp:       &application.WithdrawResponse{Positions: []application.PositionDTO{{PositionID: "p1"}}},
+		statusCode: http.StatusOK,
+	}
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	logger := platform.LoggerFromContext(mock.capturedCtx)
+	if logger == slog.Default() {
+		t.Fatal("expected enriched logger in context, got slog.Default()")
 	}
 }
