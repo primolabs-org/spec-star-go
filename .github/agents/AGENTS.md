@@ -6,7 +6,7 @@ This file defines project-specific guidance for coding agents working in this re
 
 ## 1) Repository purpose
 
-- This repository implements a Go-based AWS Lambda microservice for fixed-income portfolio valuation.
+- This repository implements a Go-based AWS Lambda microservice for fixed-income wallet position management.
 - Inbound protocols may include API Gateway HTTP API and Amazon SQS.
 - The service follows hexagonal architecture so business logic remains isolated from AWS transport and infrastructure details.
 
@@ -117,6 +117,7 @@ Run these unless the task explicitly states otherwise:
 go test ./...
 go vet ./...
 golangci-lint run ./...
+go build ./...
 ```
 
 If formatting is needed, apply formatting before finalizing changes.
@@ -163,7 +164,7 @@ Use the enabled `golangci-lint` linters as the primary static analysis gate:
 - staticcheck: It's the set of rules from staticcheck. [auto-fix]
 - unused: Checks Go code for unused constants, variables, functions and types.
 
-If the repository includes a `.golangci.yml`, `.golangci.yaml`, or equivalent configuration, follow it rather than inventing local conventions.
+This repository requires a `.golangci.yml` at the root. Follow its configuration rather than inventing local conventions.
 
 ---
 
@@ -248,50 +249,44 @@ Do not say “done” without validation evidence.
 
 ---
 
-## 13) Project-specific placeholders to fill in
+## 13) Project-specific configuration
 
-Replace these placeholders for your real repository:
-
-- module/package entrypoints:
+- Go toolchain: **1.26.2** (pinned in `go.mod`)
+- Builder image: `golang:1.26.2-bookworm`
+- Module/package entrypoints:
   - `cmd/http-lambda`
-  - `cmd/sqs-lambda`
-- architecture overview:
-  - bounded contexts
-  - inbound adapters
-  - outbound adapters
-  - bootstrap location
-- required commands:
-  - exact test command
-  - exact lint command
-  - exact build command
-  - exact integration test command
-- approved dependencies:
-  - allowed logging library
-  - allowed assertion library
-  - allowed mocking library
-  - allowed OTel packages/exporters
-- infra assumptions:
-  - API Gateway HTTP API or REST API
-  - SQS standard or FIFO
-  - OTel provider/export path
-  - local test harness (none / docker / LocalStack / real AWS dev account)
+- Architecture overview:
+  - Inbound adapters: `internal/adapters/inbound/httphandler`
+  - Outbound adapters: `internal/adapters/outbound/postgres`
+  - Bootstrap location: `cmd/http-lambda/main.go`
+- Required commands:
+  - Test: `go test ./...`
+  - Lint: `golangci-lint run ./...`
+  - Build: `go build ./...`
+  - Vet: `go vet ./...`
+- Approved direct dependencies:
+  - `github.com/aws/aws-lambda-go`
+  - `github.com/google/uuid`
+  - `github.com/jackc/pgx/v5`
+  - `github.com/shopspring/decimal`
+- Infrastructure:
+  - API Gateway HTTP API
+  - Local test harness: Docker Compose + PostgreSQL + RIE-based local Lambda execution
+  - PostgreSQL must define a non-empty `POSTGRES_PASSWORD`
+  - `golangci-lint` requires a repository-owned `.golangci.yml`
 
 ---
 
-## 14) Example project command block
-
-Replace this with the exact commands that are true for your repository.
+## 14) Project command block
 
 ```bash
-# fast validation
+# validation
 go test ./...
 go vet ./...
 golangci-lint run ./...
+go build ./...
 
 # formatting
 go fmt ./...
-
-# optional build validation
-go build ./...
 ```
 
