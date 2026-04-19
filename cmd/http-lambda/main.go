@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/primolabs-org/spec-star-go/internal/adapters/inbound/httphandler"
 	"github.com/primolabs-org/spec-star-go/internal/adapters/outbound/postgres"
@@ -28,8 +29,24 @@ func main() {
 	processedCommands := postgres.NewProcessedCommandRepository(pool)
 	unitOfWork := postgres.NewTransactionRunner(pool)
 
-	service := application.NewDepositService(clients, assets, positions, processedCommands, unitOfWork)
-	handler := httphandler.NewDepositHandler(service)
+	depositService := application.NewDepositService(clients, assets, positions, processedCommands, unitOfWork)
+	depositHandler := httphandler.NewDepositHandler(depositService)
 
-	lambda.Start(handler.Handle)
+	withdrawService := application.NewWithdrawService(clients, positions, processedCommands, unitOfWork)
+	withdrawHandler := httphandler.NewWithdrawHandler(withdrawService)
+
+	lambda.Start(func(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+		switch req.RequestContext.HTTP.Path {
+		case "/deposits":
+			return depositHandler.Handle(ctx, req)
+		case "/withdrawals":
+			return withdrawHandler.Handle(ctx, req)
+		default:
+			return events.APIGatewayV2HTTPResponse{
+				StatusCode: 404,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+				Body:       `{"error":"not found"}`,
+			}, nil
+		}
+	})
 }
