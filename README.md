@@ -1,13 +1,100 @@
-# Wallet Lambda — Local Development Environment
+# Wallet Lambda
 
-## Prerequisites
+A Go microservice deployed on AWS Lambda that manages fixed-income wallet positions (deposits and withdrawals) backed by PostgreSQL.
+
+## Overview
+
+The service exposes two operations via API Gateway HTTP API v2:
+
+- **POST /deposits** — Creates a new position (deposit lot) for a client and asset.
+- **POST /withdrawals** — Reduces position amounts across one or more lots to satisfy a desired withdrawal value (FIFO-like, by available value).
+
+Both operations are idempotent: repeating the same `order_id` replays the original response without side effects.
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| Language | Go 1.26 |
+| Runtime | AWS Lambda (`provided:al2023`) |
+| API Protocol | API Gateway HTTP API v2 events |
+| Database | PostgreSQL 16 (`pgx/v5` driver, connection pool) |
+| Decimal math | `shopspring/decimal` |
+| Structured logging | `log/slog` (JSON to stdout) |
+
+## Project Structure
+
+```
+cmd/
+  http-lambda/          Lambda entry point — routes requests to handlers
+internal/
+  domain/               Value objects, entities, and domain errors
+  application/          Use-case orchestration (DepositService, WithdrawService)
+  ports/                Repository and UnitOfWork interfaces
+  adapters/
+    inbound/httphandler/  API Gateway v2 request/response mapping
+    outbound/postgres/    pgx-based repository and transaction implementations
+  platform/             Cross-cutting: database pool config, structured logging
+migrations/             SQL schema definitions
+local-env/              Seed data for local development
+```
+
+### Architecture
+
+The codebase follows a hexagonal (ports-and-adapters) architecture:
+
+- **Domain** — Pure business logic with no framework dependencies. Entities (`Client`, `Asset`, `Position`, `ProcessedCommand`), value objects (`ProductType`), and typed errors (`ValidationError`, `ErrNotFound`, `ErrConcurrencyConflict`, `ErrInsufficientPosition`).
+- **Ports** — Interfaces that the domain and application layers depend on: `ClientRepository`, `AssetRepository`, `PositionRepository`, `ProcessedCommandRepository`, `UnitOfWork`.
+- **Application** — Service layer that coordinates domain operations, idempotency checks, input validation, and transactional persistence.
+- **Adapters (inbound)** — HTTP handlers that translate API Gateway v2 events into application-layer calls and back into HTTP responses.
+- **Adapters (outbound)** — PostgreSQL implementations of port interfaces using `pgx/v5`, including a `TransactionRunner` that propagates transactions via context.
+- **Platform** — Shared infrastructure: connection pool configuration (`DATABASE_URL`, tunable via environment variables), and a `LoggerFactory` that produces per-request loggers enriched with `request_id`, `trigger`, `operation`, and `cold_start`.
+
+### Key Design Decisions
+
+- **Idempotency via ProcessedCommand** — Every deposit/withdrawal records a `processed_commands` entry keyed by `(command_type, order_id)`. Duplicate requests return the stored response snapshot.
+- **Optimistic concurrency** — Positions carry a `row_version` that is checked on update to detect concurrent modifications.
+- **Lot-based withdrawals** — Withdrawals iterate eligible position lots in order, consuming available value until the desired amount is satisfied or an `ErrInsufficientPosition` is returned.
+- **Supported product types** — `CDB`, `LF`, `LCI`, `LCA`, `CRI`, `CRA`, `LFT`.
+
+### Database Schema
+
+Four tables defined in `migrations/001_initial_schema.sql`:
+
+| Table | Purpose |
+|---|---|
+| `clients` | Wallet clients with an `external_id` |
+| `assets` | Fixed-income instruments (instrument, product type, issuer, dates) |
+| `positions` | Deposit lots linking a client to an asset with amount, unit price, and collateral values |
+| `processed_commands` | Idempotency log storing command type, order ID, and response snapshot (JSONB) |
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
+| `DB_MAX_CONNECTIONS` | No | `3` | Maximum pool connections |
+| `DB_MIN_CONNECTIONS` | No | `0` | Minimum pool connections |
+| `DB_MAX_CONN_LIFETIME` | No | `5m` | Maximum connection lifetime |
+| `DB_MAX_CONN_IDLE_TIME` | No | `30s` | Maximum idle time per connection |
+| `DB_HEALTH_CHECK_PERIOD` | No | `15s` | Pool health check interval |
+
+## Running Tests
+
+```bash
+go test ./...
+```
+
+## Local Development Environment
+
+### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
 - [Docker Compose v2](https://docs.docker.com/compose/install/) (`docker compose` — not the legacy `docker-compose`)
 - `curl`
 - `jq`
 
-## Getting Started
+### Getting Started
 
 1. Copy the example environment file:
 
@@ -45,7 +132,7 @@
    docker compose down -v
    ```
 
-## Database Initialization Behavior
+### Database Initialization Behavior
 
 The PostgreSQL container uses the standard `/docker-entrypoint-initdb.d` mechanism:
 
@@ -61,7 +148,7 @@ docker compose down -v
 docker compose up --build
 ```
 
-## Invoking the Lambda Locally
+### Invoking the Lambda Locally
 
 All invocations are HTTP POSTs to the Lambda RIE invoke endpoint:
 
@@ -71,7 +158,7 @@ POST http://localhost:9000/2015-03-31/functions/function/invocations
 
 The request body is a JSON-encoded API Gateway HTTP API v2 event. The `body` field inside the envelope must be a **JSON-encoded string** (escaped), not a nested object.
 
-### Deposit
+#### Deposit
 
 ```bash
 curl -sS -X POST \
@@ -99,7 +186,7 @@ Replace `<REPLACE-WITH-A-FRESH-UUID>` with a unique UUID (e.g., from `uuidgen`).
 
 Expected: `"statusCode": 201` in the response.
 
-### Withdrawal
+#### Withdrawal
 
 ```bash
 curl -sS -X POST \
@@ -127,9 +214,9 @@ Replace `<REPLACE-WITH-A-FRESH-UUID>` with a new unique UUID. A deposit for this
 
 Expected: `"statusCode": 200` in the response.
 
-## Seed Data Reference
+### Seed Data Reference
 
-### Clients
+#### Clients
 
 | # | client_id | external_id |
 |---|---|---|
@@ -144,7 +231,7 @@ Expected: `"statusCode": 200` in the response.
 | 9 | `00000000-0000-0000-0000-000000000009` | `CLIENT-009` |
 | 10 | `00000000-0000-0000-0000-000000000010` | `CLIENT-010` |
 
-### Assets
+#### Assets
 
 | # | asset_id | product_type | instrument_id | asset_name |
 |---|---|---|---|---|
@@ -156,7 +243,7 @@ Expected: `"statusCode": 200` in the response.
 | 6 | `00000000-0000-0000-0000-000000000106` | `CRA` | `CRA-0001` | `CRA Local Test` |
 | 7 | `00000000-0000-0000-0000-000000000107` | `LFT` | `LFT-0001` | `LFT Local Test` |
 
-## Running the End-to-End Test
+### Running the End-to-End Test
 
 ```bash
 ./e2e-test.sh
