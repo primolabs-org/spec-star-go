@@ -23,7 +23,7 @@ The repository has four hardening gaps that cause coding agents and developers t
 Make the repository deterministic for future agent-driven changes by:
 
 1. Pinning the Go toolchain to **1.26.2** in every repository-owned reference.
-2. Pinning the builder image to **`golang:1.26.2-bookworm`**.
+2. Pinning the builder image to **`golang:1.26.2-alpine`**.
 3. Adding a repository-owned `.golangci.yml` that becomes the source of truth for lint behavior.
 4. Making `docker compose up` succeed on a clean machine by enforcing a non-empty `POSTGRES_PASSWORD` at compose-resolution time, fail-fast.
 5. Verifying `AGENTS.md` matches the locked baseline above.
@@ -34,7 +34,7 @@ Make the repository deterministic for future agent-driven changes by:
 ### Toolchain pinning
 
 - FR-1: `go.mod` declares `go 1.26.2` (replacing `go 1.25.0`). The `toolchain` directive, if present, names an exact `go1.26.2` toolchain.
-- FR-2: `Dockerfile` builder stage uses `FROM golang:1.26.2-bookworm AS build`. No floating tag (`golang:1`, `golang:1.26`, `latest`) and no `1.25.x` tag.
+- FR-2: `Dockerfile` builder stage uses `FROM golang:1.26.2-alpine AS build`. No floating tag (`golang:1`, `golang:1.26`, `latest`) and no `1.25.x` tag.
 - FR-3: No repository-owned file under `cmd/`, `internal/`, `Dockerfile`, `docker-compose.yml`, `e2e-test.sh`, `README.md`, `migrations/`, `local-env/`, `.github/agents/AGENTS.md`, or `.github/instructions/` references Go 1.25.x after the change. Existing per-feature design notes under `.agent-specstar/features/<other-feature>/` are historical artifacts and are out of scope.
 
 ### `.golangci.yml`
@@ -74,7 +74,7 @@ Make the repository deterministic for future agent-driven changes by:
 - FR-20: `.github/agents/AGENTS.md` is reviewed against this design. Required content (already present today) is confirmed:
   - repository purpose describes a fixed-income wallet position service
   - Go 1.26.2 is the pinned toolchain version
-  - builder image is pinned to `golang:1.26.2-bookworm`
+  - builder image is pinned to `golang:1.26.2-alpine`
   - local harness is Docker Compose + PostgreSQL + RIE-based local Lambda execution
   - PostgreSQL must define a non-empty `POSTGRES_PASSWORD`
   - `golangci-lint` requires a repository-owned configuration
@@ -114,7 +114,7 @@ Make the repository deterministic for future agent-driven changes by:
 ## Constraints and Assumptions
 
 - Repository-standard Go version is **Go 1.26.2**.
-- Builder image MUST be `golang:1.26.2-bookworm` unless the implementation step explicitly proves another exact `1.26.2-*` image is better. No such proof is anticipated.
+- Builder image MUST be `golang:1.26.2-alpine` unless the implementation step explicitly proves another exact `1.26.2-*` image is better. No such proof is anticipated.
 - `golangci-lint` v2 is the targeted major series for the configuration schema. The implementation step verifies the installed version matches this assumption before finalizing the file.
 - Docker Compose v2 syntax with required-variable interpolation (`${VAR:?message}`) is supported by every Compose v2 release.
 - `.env` is not committed; only `.env.example` is.
@@ -141,7 +141,7 @@ Make the repository deterministic for future agent-driven changes by:
 
 ### Builder image
 
-- Replace `FROM golang:1.25-bookworm AS build` with `FROM golang:1.26.2-bookworm AS build` in `Dockerfile`.
+- Replace `FROM golang:1.25-bookworm AS build` with `FROM golang:1.26.2-alpine AS build` in `Dockerfile`.
 - Leave the rest of the multi-stage layout unchanged. The runtime stage continues to use `public.ecr.aws/lambda/provided:al2023`.
 
 ### Docker Compose required variables
@@ -211,7 +211,7 @@ None at runtime. PostgreSQL data layout, schema, and seed scripts are untouched.
 ## Failure Model
 
 - Compose-time: missing `POSTGRES_DB`, `POSTGRES_USER`, or `POSTGRES_PASSWORD` causes Docker Compose to abort variable resolution with the configured error message before any container is created.
-- Build-time: a non-existent `golang:1.26.2-bookworm` tag (not anticipated) causes `docker build` to fail at image pull; the implementation step does not invent a fallback tag.
+- Build-time: a non-existent `golang:1.26.2-alpine` tag (not anticipated) causes `docker build` to fail at image pull; the implementation step does not invent a fallback tag.
 - Lint-time: an incompatible `golangci-lint` major version causes `golangci-lint run` to fail with a configuration error; the implementation step surfaces this as a blocker rather than altering the v2 schema to match an older binary.
 - Test-time: a dependency upgrade that breaks `go test ./...` halts the step until the breakage is fixed within the approved scope or escalated.
 
@@ -258,7 +258,7 @@ None blocking. All ambiguities are resolved by the FRs above.
 ## Success Criteria
 
 - `go.mod` declares `go 1.26.2` and `go mod tidy` is clean.
-- `Dockerfile` builder stage is `FROM golang:1.26.2-bookworm AS build`.
+- `Dockerfile` builder stage is `FROM golang:1.26.2-alpine AS build`.
 - `.golangci.yml` exists, targets the v2 schema, and enables at least the five required linters.
 - `golangci-lint run ./...` runs and reports findings (or none) without configuration errors.
 - `docker compose up --build` succeeds on a clean machine with `.env` copied from `.env.example`.

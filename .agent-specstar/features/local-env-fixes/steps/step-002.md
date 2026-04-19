@@ -9,12 +9,12 @@
 
 ## Objective
 
-Align every repository-owned Go toolchain reference with **Go 1.26.2**, pin the Docker builder image to **`golang:1.26.2-bookworm`**, and refresh direct Go module dependencies to current stable versions. Satisfies FR-1, FR-2, FR-3, FR-15, FR-16, FR-17, FR-18, and FR-19 of `design.md`.
+Align every repository-owned Go toolchain reference with **Go 1.26.2**, pin the Docker builder image to **`golang:1.26.2-alpine`**, and refresh direct Go module dependencies to current stable versions. Satisfies FR-1, FR-2, FR-3, FR-15, FR-16, FR-17, FR-18, and FR-19 of `design.md`.
 
 ## In Scope
 
 - `go.mod`: change `go 1.25.0` to `go 1.26.2`. Add an explicit `toolchain go1.26.2` directive only if the local Go binary is not exactly 1.26.2.
-- `Dockerfile`: change the builder stage to `FROM golang:1.26.2-bookworm AS build`. The runtime stage stays on `public.ecr.aws/lambda/provided:al2023`.
+- `Dockerfile`: change the builder stage to `FROM golang:1.26.2-alpine AS build`. The runtime stage stays on `public.ecr.aws/lambda/provided:al2023`.
 - `go.mod` direct `require` block: upgrade each direct dependency to the latest stable version available at implementation time using `go get -u <pkg>@latest`. Run `go mod tidy` afterwards.
 - If `cmd/http-lambda/main.go` directly imports `github.com/aws/aws-lambda-go`, ensure that package surfaces in the direct `require` block after `go mod tidy`.
 
@@ -92,7 +92,7 @@ Fail-fast. Do not silently downgrade a dependency to dodge a test failure. Do no
 
 - `go.mod` declares `go 1.26.2`.
 - A `toolchain` directive, when present, names exactly `go1.26.2`.
-- `Dockerfile` builder stage line reads exactly `FROM golang:1.26.2-bookworm AS build`.
+- `Dockerfile` builder stage line reads exactly `FROM golang:1.26.2-alpine AS build`.
 - No file in the allowed write paths references `golang:1.25`, `golang:1.26` (without patch), `golang:1`, or `golang:latest`.
 - Each direct `require` entry in `go.mod` is at the latest stable version available at implementation time and pinned exactly.
 - `go mod tidy` produces no further diff after the upgrade.
@@ -105,6 +105,6 @@ Fail-fast. Do not silently downgrade a dependency to dodge a test failure. Do no
 
 ## Escalation Conditions
 
-- The `golang:1.26.2-bookworm` tag cannot be pulled.
+- The `golang:1.26.2-alpine` tag cannot be pulled.
 - A direct dependency upgrade breaks `go build ./...` or `go test ./...` and the fix would expand scope beyond a few lines.
 - `go mod tidy` keeps producing diffs after a clean run, indicating a deeper module-graph problem.

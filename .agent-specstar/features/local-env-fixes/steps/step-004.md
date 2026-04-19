@@ -69,7 +69,7 @@ Fail-fast. If the file is missing, do not regenerate it from scratch in this ste
 - `.github/agents/AGENTS.md` satisfies every sub-item of FR-20:
   - repository purpose describes a fixed-income wallet position service (not valuation)
   - Go 1.26.2 is the pinned toolchain version
-  - builder image is pinned to `golang:1.26.2-bookworm`
+  - builder image is pinned to `golang:1.26.2-alpine`
   - local harness is Docker Compose + PostgreSQL + RIE-based local Lambda execution
   - PostgreSQL must define a non-empty `POSTGRES_PASSWORD`
   - `golangci-lint` requires a repository-owned configuration
