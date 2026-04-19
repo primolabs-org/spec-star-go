@@ -1,21 +1,41 @@
 {
   "feature": "withdraw",
-  "status": "draft",
-  "current_phase": "design",
-  "current_step": null,
-  "steps": {},
+  "status": "in-progress",
+  "current_phase": "implementation",
+  "current_step": "step-002",
+  "steps": {
+    "step-001": { "status": "completed", "outcome": "approved" },
+    "step-002": { "status": "in-progress", "outcome": null },
+    "step-003": { "status": "not-started", "outcome": null },
+    "step-004": { "status": "not-started", "outcome": null }
+  },
   "history": [
     {
       "step": "design",
       "action": "created",
-      "timestamp": "2026-04-19 12:00:00"
+      "timestamp": "2026-04-19T12:00:00-03:00"
+    },
+    {
+      "step": "step-001",
+      "action": "started",
+      "timestamp": "2026-04-19T13:30:00-03:00"
+    },
+    {
+      "step": "step-001",
+      "action": "approved",
+      "timestamp": "2026-04-19T14:00:00-03:00"
+    },
+    {
+      "step": "step-002",
+      "action": "started",
+      "timestamp": "2026-04-19T14:00:00-03:00"
     }
   ],
-  "last_actor": "SpecStar Manager",
-  "last_artifact": ".agent-specstar/features/withdraw/design.md",
+  "last_actor": "SpecStar Coordinator",
+  "last_artifact": ".agent-specstar/features/withdraw/feature-state.json",
   "blocked": false,
   "requires_user_input": false,
   "clarifications_open": false,
-  "updated_at": "2026-04-19 12:00:00",
+  "updated_at": "2026-04-19T14:00:00-03:00",
   "total_execution_time": ""
 }

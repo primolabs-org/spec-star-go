@@ -21,4 +21,7 @@ var (
 
 	// ErrDuplicate indicates a uniqueness constraint violation.
 	ErrDuplicate = errors.New("duplicate")
+
+	// ErrInsufficientPosition indicates a withdrawal exceeds the available position.
+	ErrInsufficientPosition = errors.New("insufficient position")
 )

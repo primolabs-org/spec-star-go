@@ -53,3 +53,10 @@ func TestErrDuplicate_ClassifiableAfterWrapping(t *testing.T) {
 		t.Fatal("expected errors.Is to match ErrDuplicate after wrapping")
 	}
 }
+
+func TestErrInsufficientPosition_ClassifiableAfterWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("context: %w", domain.ErrInsufficientPosition)
+	if !errors.Is(wrapped, domain.ErrInsufficientPosition) {
+		t.Fatal("expected errors.Is to match ErrInsufficientPosition after wrapping")
+	}
+}
