@@ -1,0 +1,603 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>application: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/primolabs-org/spec-star-go/internal/application/deposit_service.go (100.0%)</option>
+				
+				<option value="file1">github.com/primolabs-org/spec-star-go/internal/application/withdraw_service.go (96.1%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package application
+
+import (
+        "context"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "net/http"
+        "time"
+
+        "github.com/google/uuid"
+        "github.com/primolabs-org/spec-star-go/internal/domain"
+        "github.com/primolabs-org/spec-star-go/internal/ports"
+        "github.com/shopspring/decimal"
+)
+
+const commandTypeDeposit = "DEPOSIT"
+
+// DepositRequest holds the raw input fields for a deposit command.
+type DepositRequest struct {
+        ClientID  string `json:"client_id"`
+        AssetID   string `json:"asset_id"`
+        OrderID   string `json:"order_id"`
+        Amount    string `json:"amount"`
+        UnitPrice string `json:"unit_price"`
+}
+
+// DepositResponse is the DTO returned to callers after a successful deposit.
+type DepositResponse struct {
+        PositionID               string `json:"position_id"`
+        ClientID                 string `json:"client_id"`
+        AssetID                  string `json:"asset_id"`
+        Amount                   string `json:"amount"`
+        UnitPrice                string `json:"unit_price"`
+        TotalValue               string `json:"total_value"`
+        CollateralValue          string `json:"collateral_value"`
+        JudiciaryCollateralValue string `json:"judiciary_collateral_value"`
+        PurchasedAt              string `json:"purchased_at"`
+        CreatedAt                string `json:"created_at"`
+        UpdatedAt                string `json:"updated_at"`
+}
+
+// DepositService orchestrates the deposit command flow.
+type DepositService struct {
+        clients           ports.ClientRepository
+        assets            ports.AssetRepository
+        positions         ports.PositionRepository
+        processedCommands ports.ProcessedCommandRepository
+        unitOfWork        ports.UnitOfWork
+}
+
+// NewDepositService constructs a DepositService with required port dependencies.
+func NewDepositService(
+        clients ports.ClientRepository,
+        assets ports.AssetRepository,
+        positions ports.PositionRepository,
+        processedCommands ports.ProcessedCommandRepository,
+        unitOfWork ports.UnitOfWork,
+) *DepositService <span class="cov8" title="1">{
+        return &amp;DepositService{
+                clients:           clients,
+                assets:            assets,
+                positions:         positions,
+                processedCommands: processedCommands,
+                unitOfWork:        unitOfWork,
+        }
+}</span>
+
+// Execute validates input, enforces idempotency, creates a position, and persists atomic state.
+func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*DepositResponse, int, error) <span class="cov8" title="1">{
+        clientID, assetID, amount, unitPrice, err := validateDepositRequest(req)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusUnprocessableEntity, err
+        }</span>
+
+        <span class="cov8" title="1">existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeDeposit, req.OrderID)
+        if err != nil &amp;&amp; !errors.Is(err, domain.ErrNotFound) </span><span class="cov8" title="1">{
+                return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
+        }</span>
+        <span class="cov8" title="1">if existing != nil </span><span class="cov8" title="1">{
+                return deserializeSnapshot(existing.ResponseSnapshot())
+        }</span>
+
+        <span class="cov8" title="1">_, err = s.clients.FindByID(ctx, clientID)
+        if err != nil </span><span class="cov8" title="1">{
+                if errors.Is(err, domain.ErrNotFound) </span><span class="cov8" title="1">{
+                        return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
+                }</span>
+                <span class="cov8" title="1">return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)</span>
+        }
+
+        <span class="cov8" title="1">asset, err := s.assets.FindByID(ctx, assetID)
+        if err != nil </span><span class="cov8" title="1">{
+                if errors.Is(err, domain.ErrNotFound) </span><span class="cov8" title="1">{
+                        return nil, http.StatusUnprocessableEntity, fmt.Errorf("asset not found")
+                }</span>
+                <span class="cov8" title="1">return nil, http.StatusInternalServerError, fmt.Errorf("find asset: %w", err)</span>
+        }
+
+        <span class="cov8" title="1">if err := domain.ValidateProductType(asset.ProductType()); err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusUnprocessableEntity, fmt.Errorf("unsupported product type")
+        }</span>
+
+        // Service validates strictly positive; NewPosition rejects only negative — cannot fail here.
+        <span class="cov8" title="1">position, _ := domain.NewPosition(clientID, assetID, amount, unitPrice, time.Now().UTC())
+
+        resp := toDepositResponse(position)
+
+        // DepositResponse contains only string fields; json.Marshal cannot fail.
+        snapshotBytes, _ := json.Marshal(resp)
+
+        err = s.unitOfWork.Do(ctx, func(txCtx context.Context) error </span><span class="cov8" title="1">{
+                if err := s.positions.Create(txCtx, position); err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("create position: %w", err)
+                }</span>
+
+                <span class="cov8" title="1">cmd, err := domain.NewProcessedCommand(commandTypeDeposit, req.OrderID, clientID, snapshotBytes)
+                if err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("new processed command: %w", err)
+                }</span>
+
+                <span class="cov8" title="1">if err := s.processedCommands.Create(txCtx, cmd); err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("create processed command: %w", err)
+                }</span>
+
+                <span class="cov8" title="1">return nil</span>
+        })
+        <span class="cov8" title="1">if err != nil </span><span class="cov8" title="1">{
+                if errors.Is(err, domain.ErrDuplicate) </span><span class="cov8" title="1">{
+                        return s.replayAfterRace(ctx, req.OrderID)
+                }</span>
+                <span class="cov8" title="1">return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)</span>
+        }
+
+        <span class="cov8" title="1">return resp, http.StatusCreated, nil</span>
+}
+
+func (s *DepositService) replayAfterRace(ctx context.Context, orderID string) (*DepositResponse, int, error) <span class="cov8" title="1">{
+        existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeDeposit, orderID)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusConflict, fmt.Errorf("replay after race: %w", err)
+        }</span>
+        <span class="cov8" title="1">return deserializeSnapshot(existing.ResponseSnapshot())</span>
+}
+
+func deserializeSnapshot(snapshot []byte) (*DepositResponse, int, error) <span class="cov8" title="1">{
+        var resp DepositResponse
+        if err := json.Unmarshal(snapshot, &amp;resp); err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusInternalServerError, fmt.Errorf("unmarshal response snapshot: %w", err)
+        }</span>
+        <span class="cov8" title="1">return &amp;resp, http.StatusOK, nil</span>
+}
+
+func toDepositResponse(p *domain.Position) *DepositResponse <span class="cov8" title="1">{
+        return &amp;DepositResponse{
+                PositionID:               p.PositionID().String(),
+                ClientID:                 p.ClientID().String(),
+                AssetID:                  p.AssetID().String(),
+                Amount:                   p.Amount().String(),
+                UnitPrice:                p.UnitPrice().String(),
+                TotalValue:               p.TotalValue().String(),
+                CollateralValue:          p.CollateralValue().String(),
+                JudiciaryCollateralValue: p.JudiciaryCollateralValue().String(),
+                PurchasedAt:              p.PurchasedAt().Format(time.RFC3339),
+                CreatedAt:                p.CreatedAt().Format(time.RFC3339),
+                UpdatedAt:                p.UpdatedAt().Format(time.RFC3339),
+        }
+}</span>
+
+func validateDepositRequest(req DepositRequest) (uuid.UUID, uuid.UUID, decimal.Decimal, decimal.Decimal, error) <span class="cov8" title="1">{
+        if req.ClientID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("client_id is required")
+        }</span>
+        <span class="cov8" title="1">clientID, err := uuid.Parse(req.ClientID)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("invalid client_id")
+        }</span>
+
+        <span class="cov8" title="1">if req.AssetID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("asset_id is required")
+        }</span>
+        <span class="cov8" title="1">assetID, err := uuid.Parse(req.AssetID)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("invalid asset_id")
+        }</span>
+
+        <span class="cov8" title="1">if req.OrderID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("order_id is required")
+        }</span>
+
+        <span class="cov8" title="1">if req.Amount == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("amount is required")
+        }</span>
+        <span class="cov8" title="1">amount, err := decimal.NewFromString(req.Amount)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("invalid amount")
+        }</span>
+
+        <span class="cov8" title="1">if req.UnitPrice == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("unit_price is required")
+        }</span>
+        <span class="cov8" title="1">unitPrice, err := decimal.NewFromString(req.UnitPrice)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("invalid unit_price")
+        }</span>
+
+        <span class="cov8" title="1">if !amount.IsPositive() </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("amount must be positive")
+        }</span>
+        <span class="cov8" title="1">if !unitPrice.IsPositive() </span><span class="cov8" title="1">{
+                return uuid.Nil, uuid.Nil, decimal.Decimal{}, decimal.Decimal{}, fmt.Errorf("unit_price must be positive")
+        }</span>
+
+        <span class="cov8" title="1">return clientID, assetID, amount, unitPrice, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package application
+
+import (
+        "context"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "net/http"
+        "strconv"
+        "time"
+
+        "github.com/google/uuid"
+        "github.com/primolabs-org/spec-star-go/internal/domain"
+        "github.com/primolabs-org/spec-star-go/internal/ports"
+        "github.com/shopspring/decimal"
+)
+
+const commandTypeWithdraw = "WITHDRAW"
+
+// InsufficientPositionError indicates the total available value is less than the desired withdrawal.
+type InsufficientPositionError struct{}
+
+func (e *InsufficientPositionError) Error() string <span class="cov0" title="0">{ return "insufficient position" }</span>
+
+// ConcurrencyConflictError indicates an optimistic concurrency mismatch.
+type ConcurrencyConflictError struct{}
+
+func (e *ConcurrencyConflictError) Error() string <span class="cov0" title="0">{ return "concurrency conflict" }</span>
+
+// WithdrawRequest holds the raw input fields for a withdraw command.
+type WithdrawRequest struct {
+        ClientID       string `json:"client_id"`
+        ProductAssetID string `json:"product_asset_id"`
+        OrderID        string `json:"order_id"`
+        DesiredValue   string `json:"desired_value"`
+        IfMatch        string `json:"if_match"`
+}
+
+// AffectedPosition is the DTO for a position affected by a withdrawal.
+type AffectedPosition struct {
+        PositionID               string `json:"position_id"`
+        ClientID                 string `json:"client_id"`
+        AssetID                  string `json:"asset_id"`
+        Amount                   string `json:"amount"`
+        UnitPrice                string `json:"unit_price"`
+        TotalValue               string `json:"total_value"`
+        CollateralValue          string `json:"collateral_value"`
+        JudiciaryCollateralValue string `json:"judiciary_collateral_value"`
+        PurchasedAt              string `json:"purchased_at"`
+        CreatedAt                string `json:"created_at"`
+        UpdatedAt                string `json:"updated_at"`
+}
+
+// WithdrawResponse is the DTO returned to callers after a successful withdrawal.
+type WithdrawResponse struct {
+        AffectedPositions []AffectedPosition `json:"affected_positions"`
+}
+
+// WithdrawService orchestrates the withdrawal command flow.
+type WithdrawService struct {
+        clients           ports.ClientRepository
+        positions         ports.PositionRepository
+        processedCommands ports.ProcessedCommandRepository
+        unitOfWork        ports.UnitOfWork
+}
+
+// NewWithdrawService constructs a WithdrawService with required port dependencies.
+func NewWithdrawService(
+        clients ports.ClientRepository,
+        positions ports.PositionRepository,
+        processedCommands ports.ProcessedCommandRepository,
+        unitOfWork ports.UnitOfWork,
+) *WithdrawService <span class="cov8" title="1">{
+        return &amp;WithdrawService{
+                clients:           clients,
+                positions:         positions,
+                processedCommands: processedCommands,
+                unitOfWork:        unitOfWork,
+        }
+}</span>
+
+// Execute validates input, enforces idempotency, selects lots in FIFO order, reduces amounts, and persists atomic state.
+func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*WithdrawResponse, int, error) <span class="cov8" title="1">{
+        // Step 1: Validate input
+        clientID, desiredValue, ifMatch, err := validateWithdrawRequest(req)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusUnprocessableEntity, err
+        }</span>
+
+        // Step 2: Idempotency check
+        <span class="cov8" title="1">existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeWithdraw, req.OrderID)
+        if err != nil &amp;&amp; !errors.Is(err, domain.ErrNotFound) </span><span class="cov8" title="1">{
+                return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
+        }</span>
+        <span class="cov8" title="1">if existing != nil </span><span class="cov8" title="1">{
+                return deserializeWithdrawSnapshot(existing.ResponseSnapshot())
+        }</span>
+
+        // Step 3: Client lookup
+        <span class="cov8" title="1">_, err = s.clients.FindByID(ctx, clientID)
+        if err != nil </span><span class="cov8" title="1">{
+                if errors.Is(err, domain.ErrNotFound) </span><span class="cov8" title="1">{
+                        return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
+                }</span>
+                <span class="cov8" title="1">return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)</span>
+        }
+
+        // Step 4: Find lots
+        <span class="cov8" title="1">lots, err := s.positions.FindByClientAndInstrument(ctx, clientID, req.ProductAssetID)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusInternalServerError, fmt.Errorf("find positions: %w", err)
+        }</span>
+
+        // Step 5: No lots
+        <span class="cov8" title="1">if len(lots) == 0 </span><span class="cov8" title="1">{
+                return nil, http.StatusNotFound, fmt.Errorf("no positions found")
+        }</span>
+
+        // Step 6: Pass 1 — Sufficiency check (read-only)
+        <span class="cov8" title="1">totalAvailable := decimal.Zero
+        var eligibleLots []*domain.Position
+        for _, lot := range lots </span><span class="cov8" title="1">{
+                av := lot.AvailableValue()
+                if av.IsPositive() </span><span class="cov8" title="1">{
+                        totalAvailable = totalAvailable.Add(av)
+                        eligibleLots = append(eligibleLots, lot)
+                }</span>
+        }
+
+        // Step 7: Insufficient position
+        <span class="cov8" title="1">if totalAvailable.LessThan(desiredValue) </span><span class="cov8" title="1">{
+                return nil, http.StatusConflict, &amp;InsufficientPositionError{}
+        }</span>
+
+        // Step 8: if_match validation (between pass 1 and pass 2)
+        <span class="cov8" title="1">if ifMatch != nil </span><span class="cov8" title="1">{
+                remaining := desiredValue
+                for _, lot := range eligibleLots </span><span class="cov8" title="1">{
+                        if remaining.IsZero() </span><span class="cov0" title="0">{
+                                break</span>
+                        }
+                        <span class="cov8" title="1">valueFromLot := decimal.Min(remaining, lot.AvailableValue())
+                        remaining = remaining.Sub(valueFromLot)
+                        if lot.RowVersion() != *ifMatch </span><span class="cov8" title="1">{
+                                return nil, http.StatusConflict, &amp;ConcurrencyConflictError{}
+                        }</span>
+                }
+        }
+
+        // Step 9: Pass 2 — Mutation
+        <span class="cov8" title="1">remaining := desiredValue
+        var affectedPositions []*domain.Position
+        for _, lot := range eligibleLots </span><span class="cov8" title="1">{
+                if remaining.IsZero() </span><span class="cov8" title="1">{
+                        break</span>
+                }
+                <span class="cov8" title="1">valueFromLot := decimal.Min(remaining, lot.AvailableValue())
+                unitsSold := valueFromLot.Div(lot.UnitPrice()).Round(6)
+                // Pass 1 sufficiency check guarantees non-negative result; UpdateAmount cannot fail here.
+                _ = lot.UpdateAmount(lot.Amount().Sub(unitsSold))
+                remaining = remaining.Sub(valueFromLot)
+                affectedPositions = append(affectedPositions, lot)</span>
+        }
+
+        // Step 10: Build response
+        <span class="cov8" title="1">resp := &amp;WithdrawResponse{
+                AffectedPositions: make([]AffectedPosition, len(affectedPositions)),
+        }
+        for i, p := range affectedPositions </span><span class="cov8" title="1">{
+                resp.AffectedPositions[i] = toAffectedPosition(p)
+        }</span>
+
+        // WithdrawResponse contains only string fields; json.Marshal cannot fail.
+        <span class="cov8" title="1">snapshotBytes, _ := json.Marshal(resp)
+
+        // Step 11: Atomic persistence
+        err = s.unitOfWork.Do(ctx, func(txCtx context.Context) error </span><span class="cov8" title="1">{
+                for _, p := range affectedPositions </span><span class="cov8" title="1">{
+                        if err := s.positions.Update(txCtx, p); err != nil </span><span class="cov8" title="1">{
+                                return fmt.Errorf("update position: %w", err)
+                        }</span>
+                }
+
+                <span class="cov8" title="1">cmd, err := domain.NewProcessedCommand(commandTypeWithdraw, req.OrderID, clientID, snapshotBytes)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("new processed command: %w", err)
+                }</span>
+
+                <span class="cov8" title="1">if err := s.processedCommands.Create(txCtx, cmd); err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("create processed command: %w", err)
+                }</span>
+
+                <span class="cov8" title="1">return nil</span>
+        })
+        <span class="cov8" title="1">if err != nil </span><span class="cov8" title="1">{
+                // Step 12: Handle ErrDuplicate (concurrent race)
+                if errors.Is(err, domain.ErrDuplicate) </span><span class="cov8" title="1">{
+                        return s.replayAfterRace(ctx, req.OrderID)
+                }</span>
+                // Step 13: Handle ErrConcurrencyConflict
+                <span class="cov8" title="1">if errors.Is(err, domain.ErrConcurrencyConflict) </span><span class="cov8" title="1">{
+                        return nil, http.StatusConflict, &amp;ConcurrencyConflictError{}
+                }</span>
+                <span class="cov8" title="1">return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)</span>
+        }
+
+        <span class="cov8" title="1">return resp, http.StatusOK, nil</span>
+}
+
+func (s *WithdrawService) replayAfterRace(ctx context.Context, orderID string) (*WithdrawResponse, int, error) <span class="cov8" title="1">{
+        existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeWithdraw, orderID)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusConflict, fmt.Errorf("replay after race: %w", err)
+        }</span>
+        <span class="cov8" title="1">return deserializeWithdrawSnapshot(existing.ResponseSnapshot())</span>
+}
+
+func deserializeWithdrawSnapshot(snapshot []byte) (*WithdrawResponse, int, error) <span class="cov8" title="1">{
+        var resp WithdrawResponse
+        if err := json.Unmarshal(snapshot, &amp;resp); err != nil </span><span class="cov8" title="1">{
+                return nil, http.StatusInternalServerError, fmt.Errorf("unmarshal response snapshot: %w", err)
+        }</span>
+        <span class="cov8" title="1">return &amp;resp, http.StatusOK, nil</span>
+}
+
+func toAffectedPosition(p *domain.Position) AffectedPosition <span class="cov8" title="1">{
+        return AffectedPosition{
+                PositionID:               p.PositionID().String(),
+                ClientID:                 p.ClientID().String(),
+                AssetID:                  p.AssetID().String(),
+                Amount:                   p.Amount().String(),
+                UnitPrice:                p.UnitPrice().String(),
+                TotalValue:               p.TotalValue().String(),
+                CollateralValue:          p.CollateralValue().String(),
+                JudiciaryCollateralValue: p.JudiciaryCollateralValue().String(),
+                PurchasedAt:              p.PurchasedAt().Format(time.RFC3339),
+                CreatedAt:                p.CreatedAt().Format(time.RFC3339),
+                UpdatedAt:                p.UpdatedAt().Format(time.RFC3339),
+        }
+}</span>
+
+func validateWithdrawRequest(req WithdrawRequest) (uuid.UUID, decimal.Decimal, *int, error) <span class="cov8" title="1">{
+        if req.ClientID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("client_id is required")
+        }</span>
+        <span class="cov8" title="1">clientID, err := uuid.Parse(req.ClientID)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("invalid client_id")
+        }</span>
+
+        <span class="cov8" title="1">if req.ProductAssetID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("product_asset_id is required")
+        }</span>
+
+        <span class="cov8" title="1">if req.OrderID == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("order_id is required")
+        }</span>
+
+        <span class="cov8" title="1">if req.DesiredValue == "" </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("desired_value is required")
+        }</span>
+        <span class="cov8" title="1">desiredValue, err := decimal.NewFromString(req.DesiredValue)
+        if err != nil </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("invalid desired_value")
+        }</span>
+
+        <span class="cov8" title="1">if !desiredValue.IsPositive() </span><span class="cov8" title="1">{
+                return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("desired_value must be positive")
+        }</span>
+
+        <span class="cov8" title="1">var ifMatch *int
+        if req.IfMatch != "" </span><span class="cov8" title="1">{
+                v, err := strconv.Atoi(req.IfMatch)
+                if err != nil </span><span class="cov8" title="1">{
+                        return uuid.Nil, decimal.Decimal{}, nil, fmt.Errorf("invalid if_match")
+                }</span>
+                <span class="cov8" title="1">ifMatch = &amp;v</span>
+        }
+
+        <span class="cov8" title="1">return clientID, desiredValue, ifMatch, nil</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
