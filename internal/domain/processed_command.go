@@ -64,9 +64,9 @@ func ReconstructProcessedCommand(
 	}
 }
 
-func (pc *ProcessedCommand) CommandID() uuid.UUID        { return pc.commandID }
-func (pc *ProcessedCommand) CommandType() string          { return pc.commandType }
-func (pc *ProcessedCommand) OrderID() string              { return pc.orderID }
-func (pc *ProcessedCommand) ClientID() uuid.UUID          { return pc.clientID }
-func (pc *ProcessedCommand) ResponseSnapshot() []byte     { return pc.responseSnapshot }
-func (pc *ProcessedCommand) CreatedAt() time.Time         { return pc.createdAt }
+func (pc *ProcessedCommand) CommandID() uuid.UUID     { return pc.commandID }
+func (pc *ProcessedCommand) CommandType() string      { return pc.commandType }
+func (pc *ProcessedCommand) OrderID() string          { return pc.orderID }
+func (pc *ProcessedCommand) ClientID() uuid.UUID      { return pc.clientID }
+func (pc *ProcessedCommand) ResponseSnapshot() []byte { return pc.responseSnapshot }
+func (pc *ProcessedCommand) CreatedAt() time.Time     { return pc.createdAt }

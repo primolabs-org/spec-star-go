@@ -109,7 +109,7 @@ func ReconstructAsset(
 	}
 }
 
-func (a *Asset) AssetID() uuid.UUID      { return a.assetID }
+func (a *Asset) AssetID() uuid.UUID       { return a.assetID }
 func (a *Asset) InstrumentID() string     { return a.instrumentID }
 func (a *Asset) ProductType() ProductType { return a.productType }
 func (a *Asset) OfferID() string          { return a.offerID }
