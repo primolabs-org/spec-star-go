@@ -1,6 +1,6 @@
 ---
 name: SpecStar Architect
-model: Claude Opus 4.7 (copilot)
+model: Claude Opus 4.6 (copilot)
 user-invocable: false
 description: Complement feature design with technical architecture details and generate ordered implementation step files.
 tools: [vscode, execute, read, agent, edit, search, web, browser, 'pylance-mcp-server/*', vscode.mermaid-chat-features/renderMermaidDiagram, ms-azuretools.vscode-containers/containerToolsConfig, ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, todo]
