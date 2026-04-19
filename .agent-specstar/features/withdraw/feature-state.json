@@ -1,0 +1,38 @@
+{
+  "feature": "withdraw",
+  "status": "in-progress",
+  "currentStep": "step-001",
+  "startedAt": "2026-04-18T23:26:49-03:00",
+  "updatedAt": "2026-04-18T23:26:49-03:00",
+  "completedAt": null,
+  "steps": {
+    "step-001": {
+      "title": "Application layer: WithdrawService",
+      "status": "in-progress",
+      "startedAt": "2026-04-18T23:26:49-03:00",
+      "completedAt": null,
+      "attempts": 0
+    },
+    "step-002": {
+      "title": "Inbound HTTP handler adapter: WithdrawHandler",
+      "status": "not-started",
+      "startedAt": null,
+      "completedAt": null,
+      "attempts": 0
+    },
+    "step-003": {
+      "title": "Lambda bootstrap routing",
+      "status": "not-started",
+      "startedAt": null,
+      "completedAt": null,
+      "attempts": 0
+    }
+  },
+  "history": [
+    {
+      "timestamp": "2026-04-18T23:26:49-03:00",
+      "action": "state-reconstructed",
+      "detail": "No prior feature-state.json found. Reconstructed from artifacts: design.md and 3 steps exist. No implementation files found. Starting from step-001."
+    }
+  ]
+}
