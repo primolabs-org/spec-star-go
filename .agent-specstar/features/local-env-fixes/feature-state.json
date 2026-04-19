@@ -1,0 +1,26 @@
+{
+  "feature": "local-env-fixes",
+  "status": "ready-for-implementation",
+  "current_phase": "execution",
+  "current_step": "step-001",
+  "steps": {
+    "step-001": { "status": "pending", "outcome": "" },
+    "step-002": { "status": "pending", "outcome": "" },
+    "step-003": { "status": "pending", "outcome": "" },
+    "step-004": { "status": "pending", "outcome": "" }
+  },
+  "history": [
+    {
+      "step": "design",
+      "action": "created",
+      "timestamp": "2026-04-19 00:00:00"
+    }
+  ],
+  "last_actor": "SpecStar Manager",
+  "last_artifact": ".agent-specstar\\features\\local-env-fixes\\design.md",
+  "blocked": false,
+  "requires_user_input": false,
+  "clarifications_open": false,
+  "updated_at": "2026-04-19 00:00:00",
+  "total_execution_time": "0m"
+}
