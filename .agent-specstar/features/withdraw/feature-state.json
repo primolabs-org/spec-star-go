@@ -1,9 +1,9 @@
 {
   "feature": "withdraw",
   "status": "in-progress",
-  "currentStep": "step-002",
+  "currentStep": "step-003",
   "startedAt": "2026-04-18T23:26:49-03:00",
-  "updatedAt": "2026-04-18T23:32:00-03:00",
+  "updatedAt": "2026-04-18T23:38:00-03:00",
   "completedAt": null,
   "steps": {
     "step-001": {
@@ -15,15 +15,15 @@
     },
     "step-002": {
       "title": "Inbound HTTP handler adapter: WithdrawHandler",
-      "status": "in-progress",
+      "status": "completed",
       "startedAt": "2026-04-18T23:32:00-03:00",
-      "completedAt": null,
-      "attempts": 0
+      "completedAt": "2026-04-18T23:38:00-03:00",
+      "attempts": 1
     },
     "step-003": {
       "title": "Lambda bootstrap routing",
-      "status": "not-started",
-      "startedAt": null,
+      "status": "in-progress",
+      "startedAt": "2026-04-18T23:38:00-03:00",
       "completedAt": null,
       "attempts": 0
     }
@@ -38,6 +38,11 @@
       "timestamp": "2026-04-18T23:32:00-03:00",
       "action": "step-001-completed",
       "detail": "WithdrawService with 34 tests, 100% coverage. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:38:00-03:00",
+      "action": "step-002-completed",
+      "detail": "WithdrawHandler with 13 tests, 100% coverage. Reviewed and approved."
     }
   ]
 }
