@@ -1,0 +1,23 @@
+{
+  "feature": "feature-example",
+  "status": "draft",
+  "current_phase": "planning",
+  "current_step": "step-001",
+  "steps": {
+    "step-001": { "status": "completed", "outcome": "approved" }
+  },
+    "history": [
+    {
+      "step": "step-001",
+      "action": "approved",
+      "timestamp": "2026-04-12 12:00:00"
+    }
+  ],
+  "last_actor": "SpecStar Coordinator",
+  "last_artifact": ".agent-specstar\\features\\feature-example\\reviews\\step-001-review.md",
+  "blocked": false,
+  "requires_user_input": false,
+  "clarifications_open": false,
+  "updated_at": "2026-04-12 12:00:00",
+  "total_execution_time": "1h 30m"
+}
