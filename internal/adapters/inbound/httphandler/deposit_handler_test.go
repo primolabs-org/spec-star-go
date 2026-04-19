@@ -15,10 +15,10 @@ import (
 )
 
 type mockDepositExecutor struct {
-	resp       *application.DepositResponse
-	statusCode int
-	err        error
-	captured   application.DepositRequest
+	resp        *application.DepositResponse
+	statusCode  int
+	err         error
+	captured    application.DepositRequest
 	capturedCtx context.Context
 }
 
