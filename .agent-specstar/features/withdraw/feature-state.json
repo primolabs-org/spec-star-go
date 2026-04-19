@@ -1,0 +1,61 @@
+{
+  "feature": "withdraw",
+  "status": "completed",
+  "currentStep": null,
+  "startedAt": "2026-04-18T23:26:49-03:00",
+  "updatedAt": "2026-04-18T23:42:00-03:00",
+  "completedAt": "2026-04-18T23:42:00-03:00",
+  "steps": {
+    "step-001": {
+      "title": "Application layer: WithdrawService",
+      "status": "completed",
+      "startedAt": "2026-04-18T23:26:49-03:00",
+      "completedAt": "2026-04-18T23:32:00-03:00",
+      "attempts": 1
+    },
+    "step-002": {
+      "title": "Inbound HTTP handler adapter: WithdrawHandler",
+      "status": "completed",
+      "startedAt": "2026-04-18T23:32:00-03:00",
+      "completedAt": "2026-04-18T23:38:00-03:00",
+      "attempts": 1
+    },
+    "step-003": {
+      "title": "Lambda bootstrap routing",
+      "status": "completed",
+      "startedAt": "2026-04-18T23:38:00-03:00",
+      "completedAt": "2026-04-18T23:42:00-03:00",
+      "attempts": 1
+    }
+  },
+  "history": [
+    {
+      "timestamp": "2026-04-18T23:26:49-03:00",
+      "action": "state-reconstructed",
+      "detail": "No prior feature-state.json found. Reconstructed from artifacts: design.md and 3 steps exist. No implementation files found. Starting from step-001."
+    },
+    {
+      "timestamp": "2026-04-18T23:32:00-03:00",
+      "action": "step-001-completed",
+      "detail": "WithdrawService with 34 tests, 100% coverage. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:38:00-03:00",
+      "action": "step-002-completed",
+      "detail": "WithdrawHandler with 13 tests, 100% coverage. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:42:00-03:00",
+      "action": "step-003-completed",
+      "detail": "Lambda bootstrap routing with path-based router. go build and go vet pass. Reviewed and approved."
+    },
+    {
+      "timestamp": "2026-04-18T23:42:00-03:00",
+      "action": "feature-completed",
+      "detail": "All 3 steps implemented, reviewed, and approved. Withdraw command feature fully implemented."
+    }
+  ],
+  "totalExecutionTime": "15m",
+  "startedAt": "2026-04-18T23:26:49-03:00",
+  "lastUpdatedAt": "2026-04-18T23:42:00-03:00"
+}
