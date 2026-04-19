@@ -2,12 +2,12 @@
   "feature": "withdraw",
   "status": "in-progress",
   "current_phase": "implementation",
-  "current_step": "step-003",
+  "current_step": "step-004",
   "steps": {
     "step-001": { "status": "completed", "outcome": "approved" },
     "step-002": { "status": "completed", "outcome": "approved" },
-    "step-003": { "status": "in-progress", "outcome": null },
-    "step-004": { "status": "not-started", "outcome": null }
+    "step-003": { "status": "completed", "outcome": "approved" },
+    "step-004": { "status": "in-progress", "outcome": null }
   },
   "history": [
     {
@@ -49,13 +49,23 @@
       "step": "step-003",
       "action": "started",
       "timestamp": "2026-04-19T14:30:00-03:00"
+    },
+    {
+      "step": "step-003",
+      "action": "approved",
+      "timestamp": "2026-04-19T14:45:00-03:00"
+    },
+    {
+      "step": "step-004",
+      "action": "started",
+      "timestamp": "2026-04-19T14:45:00-03:00"
     }
   ],
   "last_actor": "SpecStar Coordinator",
-  "last_artifact": ".agent-specstar/features/withdraw/steps/step-002-fix-001.md",
+  "last_artifact": ".agent-specstar/features/withdraw/steps/step-003.md",
   "blocked": false,
   "requires_user_input": false,
   "clarifications_open": false,
-  "updated_at": "2026-04-19T14:30:00-03:00",
+  "updated_at": "2026-04-19T14:45:00-03:00",
   "total_execution_time": ""
 }
