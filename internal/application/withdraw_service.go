@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
 )
@@ -70,11 +71,15 @@ func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*Wi
 		return nil, http.StatusUnprocessableEntity, err
 	}
 
+	logger := platform.LoggerFromContext(ctx)
+
 	existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeWithdraw, req.OrderID)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		logger.ErrorContext(ctx, "find processed command failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
 	}
 	if existing != nil {
+		logger.InfoContext(ctx, "withdraw replayed", "order_id", req.OrderID, "outcome", "replayed")
 		return deserializeWithdrawSnapshot(existing.ResponseSnapshot())
 	}
 
@@ -83,6 +88,7 @@ func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*Wi
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
 		}
+		logger.ErrorContext(ctx, "find client failed", "error", err, "client_id", clientID.String(), "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)
 	}
 
@@ -167,6 +173,7 @@ func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*Wi
 		if errors.Is(err, domain.ErrInsufficientPosition) {
 			return nil, http.StatusConflict, fmt.Errorf("withdraw: %w", err)
 		}
+		logger.ErrorContext(ctx, "unit of work failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)
 	}
 
@@ -178,6 +185,8 @@ func (s *WithdrawService) replayAfterRace(ctx context.Context, orderID string) (
 	if err != nil {
 		return nil, http.StatusConflict, fmt.Errorf("replay after race: %w", err)
 	}
+	logger := platform.LoggerFromContext(ctx)
+	logger.InfoContext(ctx, "withdraw replayed after race", "order_id", orderID, "outcome", "replayed")
 	return deserializeWithdrawSnapshot(existing.ResponseSnapshot())
 }
 

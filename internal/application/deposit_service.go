@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
 )
@@ -73,11 +74,15 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 		return nil, http.StatusUnprocessableEntity, err
 	}
 
+	logger := platform.LoggerFromContext(ctx)
+
 	existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeDeposit, req.OrderID)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		logger.ErrorContext(ctx, "find processed command failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
 	}
 	if existing != nil {
+		logger.InfoContext(ctx, "deposit replayed", "order_id", req.OrderID, "outcome", "replayed")
 		return deserializeSnapshot(existing.ResponseSnapshot())
 	}
 
@@ -86,6 +91,7 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
 		}
+		logger.ErrorContext(ctx, "find client failed", "error", err, "client_id", clientID.String(), "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)
 	}
 
@@ -94,6 +100,7 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, http.StatusUnprocessableEntity, fmt.Errorf("asset not found")
 		}
+		logger.ErrorContext(ctx, "find asset failed", "error", err, "asset_id", assetID.String(), "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("find asset: %w", err)
 	}
 
@@ -133,6 +140,7 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 		if errors.Is(err, domain.ErrDuplicate) {
 			return s.replayAfterRace(ctx, req.OrderID)
 		}
+		logger.ErrorContext(ctx, "unit of work failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
 		return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)
 	}
 
@@ -144,6 +152,8 @@ func (s *DepositService) replayAfterRace(ctx context.Context, orderID string) (*
 	if err != nil {
 		return nil, http.StatusConflict, fmt.Errorf("replay after race: %w", err)
 	}
+	logger := platform.LoggerFromContext(ctx)
+	logger.InfoContext(ctx, "deposit replayed after race", "order_id", orderID, "outcome", "replayed")
 	return deserializeSnapshot(existing.ResponseSnapshot())
 }
 

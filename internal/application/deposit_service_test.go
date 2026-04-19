@@ -1,17 +1,36 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/shopspring/decimal"
 )
+
+func parseLogEntries(buf *bytes.Buffer) []map[string]any {
+	var entries []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
 
 // --- Mock implementations ---
 
@@ -744,5 +763,318 @@ func TestExecute_IdempotentReplay_CorruptSnapshot_Returns500(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// --- Logging tests ---
+
+func TestExecute_ProcessedCommandInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return nil, errors.New("database crashed")
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestExecute_IdempotencyReplay_LogsInfo(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+
+	snapshot := DepositResponse{
+		PositionID: uuid.New().String(),
+		ClientID:   uuid.New().String(),
+		AssetID:    uuid.New().String(),
+		Amount:     "100", UnitPrice: "10", TotalValue: "1000",
+		CollateralValue: "0", JudiciaryCollateralValue: "0",
+		PurchasedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), "DEPOSIT", "order-123", uuid.New(), snapshotBytes, time.Now(),
+		), nil
+	}
+
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+	req.OrderID = "order-123"
+
+	_, status, err := svc.Execute(ctx, req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "INFO" {
+		t.Errorf("expected level INFO, got %v", entry["level"])
+	}
+	if entry["outcome"] != "replayed" {
+		t.Errorf("expected outcome replayed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != "order-123" {
+		t.Errorf("expected order_id order-123, got %v", entry["order_id"])
+	}
+}
+
+func TestExecute_RaceConditionReplay_LogsInfo(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+
+	snapshot := DepositResponse{
+		PositionID: uuid.New().String(),
+		ClientID:   uuid.New().String(),
+		AssetID:    uuid.New().String(),
+		Amount:     "50", UnitPrice: "5", TotalValue: "250",
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	callCount := 0
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		callCount++
+		if callCount == 1 {
+			return nil, domain.ErrNotFound
+		}
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), "DEPOSIT", "order-race", uuid.New(), snapshotBytes, time.Now(),
+		), nil
+	}
+
+	processedCmds.createFn = func(_ context.Context, _ *domain.ProcessedCommand) error {
+		return domain.ErrDuplicate
+	}
+
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+	req.OrderID = "order-race"
+
+	_, status, err := svc.Execute(ctx, req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "INFO" {
+		t.Errorf("expected level INFO, got %v", entry["level"])
+	}
+	if entry["outcome"] != "replayed" {
+		t.Errorf("expected outcome replayed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != "order-race" {
+		t.Errorf("expected order_id order-race, got %v", entry["order_id"])
+	}
+}
+
+func TestExecute_UnitOfWorkInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	positions.createFn = func(_ context.Context, _ *domain.Position) error {
+		return errors.New("disk full")
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestExecute_ClientInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, errors.New("connection refused")
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["client_id"] != req.ClientID {
+		t.Errorf("expected client_id %s, got %v", req.ClientID, entry["client_id"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestExecute_AssetInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	assets.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Asset, error) {
+		return nil, errors.New("timeout")
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["asset_id"] != req.AssetID {
+		t.Errorf("expected asset_id %s, got %v", req.AssetID, entry["asset_id"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestExecute_ClientNotFound_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, domain.ErrNotFound
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+func TestExecute_AssetNotFound_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	assets.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Asset, error) {
+		return nil, domain.ErrNotFound
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
 	}
 }

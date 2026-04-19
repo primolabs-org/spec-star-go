@@ -1,15 +1,18 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/shopspring/decimal"
 )
 
@@ -1011,5 +1014,354 @@ func TestWithdrawExecute_UpdateAmountError_RoundingCausesNegative_Returns500(t *
 	}
 	if err2 == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// --- Logging tests ---
+
+func TestWithdrawExecute_ProcessedCommandInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return nil, errors.New("database crashed")
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestWithdrawExecute_IdempotencyReplay_LogsInfo(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+
+	snapshot := WithdrawResponse{
+		Positions: []PositionDTO{
+			{
+				PositionID: uuid.New().String(),
+				ClientID:   uuid.New().String(),
+				AssetID:    uuid.New().String(),
+				Amount:     "50", UnitPrice: "10", TotalValue: "500",
+			},
+		},
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), commandTypeWithdraw, "order-w-123", uuid.New(), snapshotBytes, time.Now(),
+		), nil
+	}
+
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, err := svc.Execute(ctx, req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "INFO" {
+		t.Errorf("expected level INFO, got %v", entry["level"])
+	}
+	if entry["outcome"] != "replayed" {
+		t.Errorf("expected outcome replayed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+}
+
+func TestWithdrawExecute_RaceConditionReplay_LogsInfo(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clientID := uuid.New()
+	assetID := uuid.New()
+	req := validWithdrawRequest()
+	req.ClientID = clientID.String()
+	req.DesiredValue = "50"
+
+	lot := makePosition(t, clientID, assetID, "10", "10", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return []*domain.Position{lot}, nil
+	}
+	positions.updateFn = func(_ context.Context, _ *domain.Position) error {
+		return nil
+	}
+
+	snapshot := WithdrawResponse{
+		Positions: []PositionDTO{
+			{
+				PositionID: uuid.New().String(),
+				ClientID:   clientID.String(),
+				AssetID:    assetID.String(),
+				Amount:     "5", UnitPrice: "10", TotalValue: "50",
+			},
+		},
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	callCount := 0
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		callCount++
+		if callCount == 1 {
+			return nil, domain.ErrNotFound
+		}
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), commandTypeWithdraw, req.OrderID, clientID, snapshotBytes, time.Now(),
+		), nil
+	}
+
+	processedCmds.createFn = func(_ context.Context, _ *domain.ProcessedCommand) error {
+		return domain.ErrDuplicate
+	}
+
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+
+	_, status, err := svc.Execute(ctx, req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "INFO" {
+		t.Errorf("expected level INFO, got %v", entry["level"])
+	}
+	if entry["outcome"] != "replayed" {
+		t.Errorf("expected outcome replayed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+}
+
+func TestWithdrawExecute_UnitOfWorkInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return nil, errors.New("db timeout")
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestWithdrawExecute_ClientInfraFailure_LogsError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, errors.New("connection refused")
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	entries := parseLogEntries(&buf)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["level"] != "ERROR" {
+		t.Errorf("expected level ERROR, got %v", entry["level"])
+	}
+	if entry["outcome"] != "failed" {
+		t.Errorf("expected outcome failed, got %v", entry["outcome"])
+	}
+	if entry["client_id"] != req.ClientID {
+		t.Errorf("expected client_id %s, got %v", req.ClientID, entry["client_id"])
+	}
+	if entry["order_id"] != req.OrderID {
+		t.Errorf("expected order_id %s, got %v", req.OrderID, entry["order_id"])
+	}
+	if _, ok := entry["error"]; !ok {
+		t.Error("expected error field in log entry")
+	}
+}
+
+func TestWithdrawExecute_ClientNotFound_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, domain.ErrNotFound
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+func TestWithdrawExecute_NoPositions_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return []*domain.Position{}, nil
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+func TestWithdrawExecute_InsufficientPosition_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clientID := uuid.New()
+	assetID := uuid.New()
+	req := validWithdrawRequest()
+	req.ClientID = clientID.String()
+	req.DesiredValue = "5000"
+
+	lot := makePosition(t, clientID, assetID, "10", "10", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return []*domain.Position{lot}, nil
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+func TestWithdrawExecute_ConcurrencyConflict_NoLogEmitted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ctx := platform.WithLogger(context.Background(), logger)
+
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clientID := uuid.New()
+	assetID := uuid.New()
+	req := validWithdrawRequest()
+	req.ClientID = clientID.String()
+	req.DesiredValue = "50"
+
+	lot := makePosition(t, clientID, assetID, "10", "10", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return []*domain.Position{lot}, nil
+	}
+	positions.updateFn = func(_ context.Context, _ *domain.Position) error {
+		return domain.ErrConcurrencyConflict
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+
+	_, status, _ := svc.Execute(ctx, req)
+
+	if status != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, status)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
 	}
 }
