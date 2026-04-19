@@ -101,13 +101,17 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 		return nil, http.StatusUnprocessableEntity, fmt.Errorf("unsupported product type")
 	}
 
-	// Service validates strictly positive; NewPosition rejects only negative — cannot fail here.
-	position, _ := domain.NewPosition(clientID, assetID, amount, unitPrice, time.Now().UTC())
+	position, err := domain.NewPosition(clientID, assetID, amount, unitPrice, time.Now().UTC())
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("new position: %w", err)
+	}
 
 	resp := toDepositResponse(position)
 
-	// DepositResponse contains only string fields; json.Marshal cannot fail.
-	snapshotBytes, _ := json.Marshal(resp)
+	snapshotBytes, err := json.Marshal(resp)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("marshal response snapshot: %w", err)
+	}
 
 	err = s.unitOfWork.Do(ctx, func(txCtx context.Context) error {
 		if err := s.positions.Create(txCtx, position); err != nil {

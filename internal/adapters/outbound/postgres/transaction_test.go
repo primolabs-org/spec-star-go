@@ -100,3 +100,25 @@ func TestTransactionRunner_NestedRepositoryCalls(t *testing.T) {
 		t.Fatalf("Do with nested calls should succeed: %v", err)
 	}
 }
+
+func TestTransactionRunner_RollbackFailure_JoinsBothErrors(t *testing.T) {
+	pool := testPool(t)
+	runner := NewTransactionRunner(pool)
+
+	fnError := fmt.Errorf("fn failed")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	err := runner.Do(ctx, func(_ context.Context) error {
+		cancel()
+		return fnError
+	})
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if !errors.Is(err, fnError) {
+		t.Errorf("expected fn error to be preserved, got: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled to be surfaced, got: %v", err)
+	}
+}

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +26,9 @@ func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context)
 	}
 
 	if err := fn(context.WithValue(ctx, txKey{}, tx)); err != nil {
-		_ = tx.Rollback(ctx)
+		if rbErr := tx.Rollback(ctx); rbErr != nil {
+			return errors.Join(err, rbErr)
+		}
 		return err
 	}
 
