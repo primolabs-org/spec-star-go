@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set and non-empty}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set and non-empty}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set and non-empty}
     ports:
       - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
@@ -20,7 +20,7 @@ services:
   lambda:
     build: .
     environment:
-      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      DATABASE_URL: "postgres://${POSTGRES_USER:?POSTGRES_USER must be set and non-empty}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set and non-empty}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set and non-empty}?sslmode=disable"
     ports:
       - "${LAMBDA_HOST_PORT:-9000}:8080"
     depends_on:

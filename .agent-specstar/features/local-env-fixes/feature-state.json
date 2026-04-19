@@ -2,11 +2,11 @@
   "feature": "local-env-fixes",
   "status": "in-progress",
   "current_phase": "execution",
-  "current_step": "step-002",
+  "current_step": "step-003",
   "steps": {
     "step-001": { "status": "completed", "outcome": "approved" },
-    "step-002": { "status": "in-progress", "outcome": "" },
-    "step-003": { "status": "pending", "outcome": "" },
+    "step-002": { "status": "completed", "outcome": "approved" },
+    "step-003": { "status": "in-progress", "outcome": "" },
     "step-004": { "status": "pending", "outcome": "" }
   },
   "history": [
@@ -42,10 +42,21 @@
       "step": "step-002",
       "action": "engineer-started",
       "timestamp": "2026-04-19T14:09:00-03:00"
+    },
+    {
+      "step": "step-002",
+      "action": "approved-and-committed",
+      "timestamp": "2026-04-19T14:15:00-03:00",
+      "detail": "Commit 848ddc9"
+    },
+    {
+      "step": "step-003",
+      "action": "engineer-started",
+      "timestamp": "2026-04-19T14:16:00-03:00"
     }
   ],
   "last_actor": "SpecStar Coordinator",
-  "last_artifact": ".agent-specstar\\features\\local-env-fixes\\reviews\\step-001-re-review.md",
+  "last_artifact": ".agent-specstar\\features\\local-env-fixes\\reviews\\step-002-review.md",
   "blocked": false,
   "requires_user_input": false,
   "clarifications_open": false,
