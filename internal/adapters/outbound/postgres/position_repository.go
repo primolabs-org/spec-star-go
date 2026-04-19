@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
 )
@@ -37,6 +38,7 @@ func (r *PositionRepository) FindByID(ctx context.Context, positionID uuid.UUID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("position %s: %w", positionID, domain.ErrNotFound)
 		}
+		platform.LoggerFromContext(ctx).Error("FindByID: query failed", "position_id", positionID.String(), "error", err.Error())
 		return nil, fmt.Errorf("querying position %s: %w", positionID, err)
 	}
 	return pos, nil
@@ -49,6 +51,7 @@ func (r *PositionRepository) FindByClientAndAsset(ctx context.Context, clientID,
 		clientID, assetID,
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("FindByClientAndAsset: query failed", "client_id", clientID.String(), "asset_id", assetID.String(), "error", err.Error())
 		return nil, fmt.Errorf("querying positions for client %s asset %s: %w", clientID, assetID, err)
 	}
 	defer rows.Close()
@@ -68,6 +71,7 @@ func (r *PositionRepository) FindByClientAndInstrument(ctx context.Context, clie
 		clientID, instrumentID,
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("FindByClientAndInstrument: query failed", "client_id", clientID.String(), "instrument_id", instrumentID, "error", err.Error())
 		return nil, fmt.Errorf("querying positions for client %s instrument %s: %w", clientID, instrumentID, err)
 	}
 	defer rows.Close()
@@ -84,6 +88,7 @@ func (r *PositionRepository) Create(ctx context.Context, position *domain.Positi
 		position.CreatedAt(), position.UpdatedAt(), position.PurchasedAt(), position.RowVersion(),
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("Create: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
 		return fmt.Errorf("inserting position %s: %w", position.PositionID(), err)
 	}
 	return nil
@@ -101,6 +106,7 @@ func (r *PositionRepository) Update(ctx context.Context, position *domain.Positi
 		position.PositionID(), position.RowVersion()-1,
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("Update: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
 		return fmt.Errorf("updating position %s: %w", position.PositionID(), err)
 	}
 	if tag.RowsAffected() == 0 {

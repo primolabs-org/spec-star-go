@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 )
 
@@ -39,6 +40,7 @@ func (r *ClientRepository) FindByID(ctx context.Context, clientID uuid.UUID) (*d
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("client %s: %w", clientID, domain.ErrNotFound)
 		}
+		platform.LoggerFromContext(ctx).Error("FindByID: query failed", "client_id", clientID.String(), "error", err.Error())
 		return nil, fmt.Errorf("querying client %s: %w", clientID, err)
 	}
 
@@ -53,6 +55,7 @@ func (r *ClientRepository) Create(ctx context.Context, client *domain.Client) er
 		client.ClientID(), client.ExternalID(), client.CreatedAt(),
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("Create: exec failed", "client_id", client.ClientID().String(), "error", err.Error())
 		return fmt.Errorf("inserting client %s: %w", client.ClientID(), err)
 	}
 	return nil

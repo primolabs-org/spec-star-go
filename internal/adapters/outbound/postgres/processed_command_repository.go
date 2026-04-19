@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 )
 
@@ -46,6 +47,7 @@ func (r *ProcessedCommandRepository) FindByTypeAndOrderID(ctx context.Context, c
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("processed command (%s, %s): %w", commandType, orderID, domain.ErrNotFound)
 		}
+		platform.LoggerFromContext(ctx).Error("FindByTypeAndOrderID: query failed", "command_type", commandType, "order_id", orderID, "error", err.Error())
 		return nil, fmt.Errorf("querying processed command (%s, %s): %w", commandType, orderID, err)
 	}
 
@@ -65,6 +67,7 @@ func (r *ProcessedCommandRepository) Create(ctx context.Context, cmd *domain.Pro
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
 			return fmt.Errorf("processed command (%s, %s): %w", cmd.CommandType(), cmd.OrderID(), domain.ErrDuplicate)
 		}
+		platform.LoggerFromContext(ctx).Error("Create: exec failed", "command_id", cmd.CommandID().String(), "error", err.Error())
 		return fmt.Errorf("inserting processed command %s: %w", cmd.CommandID(), err)
 	}
 	return nil

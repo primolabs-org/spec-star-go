@@ -5,14 +5,20 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 )
 
 var _ ports.UnitOfWork = (*TransactionRunner)(nil)
 
+type beginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 type TransactionRunner struct {
-	pool *pgxpool.Pool
+	pool beginner
 }
 
 func NewTransactionRunner(pool *pgxpool.Pool) *TransactionRunner {
@@ -22,6 +28,7 @@ func NewTransactionRunner(pool *pgxpool.Pool) *TransactionRunner {
 func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("Do: begin transaction failed", "error", err.Error())
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 
@@ -33,6 +40,7 @@ func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		platform.LoggerFromContext(ctx).Error("Do: commit transaction failed", "error", err.Error())
 		return fmt.Errorf("committing transaction: %w", err)
 	}
 	return nil

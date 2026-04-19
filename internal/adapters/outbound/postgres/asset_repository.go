@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
+	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 )
 
@@ -28,18 +29,32 @@ const assetColumns = `asset_id, instrument_id, product_type, offer_id, emission_
 
 func (r *AssetRepository) FindByID(ctx context.Context, assetID uuid.UUID) (*domain.Asset, error) {
 	db := executorFromContext(ctx, r.pool)
-	return scanAsset(
+	asset, err := scanAsset(
 		db.QueryRow(ctx, `SELECT `+assetColumns+` FROM assets WHERE asset_id = $1`, assetID),
 		fmt.Sprintf("asset %s", assetID),
 	)
+	if err != nil {
+		if !errors.Is(err, domain.ErrNotFound) {
+			platform.LoggerFromContext(ctx).Error("FindByID: query failed", "asset_id", assetID.String(), "error", err.Error())
+		}
+		return nil, err
+	}
+	return asset, nil
 }
 
 func (r *AssetRepository) FindByInstrumentID(ctx context.Context, instrumentID string) (*domain.Asset, error) {
 	db := executorFromContext(ctx, r.pool)
-	return scanAsset(
+	asset, err := scanAsset(
 		db.QueryRow(ctx, `SELECT `+assetColumns+` FROM assets WHERE instrument_id = $1`, instrumentID),
 		fmt.Sprintf("asset with instrument_id %s", instrumentID),
 	)
+	if err != nil {
+		if !errors.Is(err, domain.ErrNotFound) {
+			platform.LoggerFromContext(ctx).Error("FindByInstrumentID: query failed", "instrument_id", instrumentID, "error", err.Error())
+		}
+		return nil, err
+	}
+	return asset, nil
 }
 
 func scanAsset(row pgx.Row, label string) (*domain.Asset, error) {
@@ -95,6 +110,7 @@ func (r *AssetRepository) Create(ctx context.Context, asset *domain.Asset) error
 		asset.AssetName(), asset.IssuanceDate(), asset.MaturityDate(), asset.CreatedAt(),
 	)
 	if err != nil {
+		platform.LoggerFromContext(ctx).Error("Create: exec failed", "asset_id", asset.AssetID().String(), "error", err.Error())
 		return fmt.Errorf("inserting asset %s: %w", asset.AssetID(), err)
 	}
 	return nil
