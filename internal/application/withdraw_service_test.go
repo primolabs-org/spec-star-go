@@ -14,6 +14,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // --- Withdraw mock implementations ---
@@ -1363,5 +1364,175 @@ func TestWithdrawExecute_ConcurrencyConflict_NoLogEmitted(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+// --- Withdraw tracing tests ---
+
+func TestWithdrawExecute_Success_CreatesSpanWithOutcomeSuccess(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clientID := uuid.New()
+	assetID := uuid.New()
+	req := validWithdrawRequest()
+	req.ClientID = clientID.String()
+	req.DesiredValue = "50"
+
+	lot := makePosition(t, clientID, assetID, "10", "10", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	positions.findByClientAndInstrumentFn = func(_ context.Context, _ uuid.UUID, _ string) ([]*domain.Position, error) {
+		return []*domain.Position{lot}, nil
+	}
+	positions.updateFn = func(_ context.Context, _ *domain.Position) error {
+		return nil
+	}
+
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+
+	_, status, err := svc.Execute(context.Background(), req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name() != "withdraw.execute" {
+		t.Errorf("expected span name withdraw.execute, got %s", span.Name())
+	}
+	if span.Status().Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "success" {
+		t.Errorf("expected wallet.outcome=success, got %s", outcome.AsString())
+	}
+	orderID, ok := findSpanAttribute(span, "wallet.order_id")
+	if !ok {
+		t.Fatal("expected wallet.order_id attribute")
+	}
+	if orderID.AsString() != req.OrderID {
+		t.Errorf("expected wallet.order_id=%s, got %s", req.OrderID, orderID.AsString())
+	}
+}
+
+func TestWithdrawExecute_IdempotentReplay_SpanOutcomeReplayed(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+
+	snapshot := WithdrawResponse{
+		Positions: []PositionDTO{
+			{
+				PositionID: uuid.New().String(), ClientID: uuid.New().String(),
+				AssetID: uuid.New().String(), Amount: "50", UnitPrice: "10", TotalValue: "500",
+			},
+		},
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), commandTypeWithdraw, "order-w-123", uuid.New(), snapshotBytes, time.Now(),
+		), nil
+	}
+
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "replayed" {
+		t.Errorf("expected wallet.outcome=replayed, got %s", outcome.AsString())
+	}
+}
+
+func TestWithdrawExecute_Failure_SpanStatusError(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+	req.ClientID = ""
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "failed" {
+		t.Errorf("expected wallet.outcome=failed, got %s", outcome.AsString())
+	}
+}
+
+func TestWithdrawExecute_InfrastructureError_SpanStatusError(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, positions, processedCmds, uow := withdrawDefaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, errors.New("connection refused")
+	}
+	svc := buildWithdrawService(clients, positions, processedCmds, uow)
+	req := validWithdrawRequest()
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "failed" {
+		t.Errorf("expected wallet.outcome=failed, got %s", outcome.AsString())
+	}
+	orderID, ok := findSpanAttribute(span, "wallet.order_id")
+	if !ok {
+		t.Fatal("expected wallet.order_id attribute")
+	}
+	if orderID.AsString() != req.OrderID {
+		t.Errorf("expected wallet.order_id=%s, got %s", req.OrderID, orderID.AsString())
 	}
 }

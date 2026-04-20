@@ -15,6 +15,11 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func parseLogEntries(buf *bytes.Buffer) []map[string]any {
@@ -1076,5 +1081,223 @@ func TestExecute_AssetNotFound_NoLogEmitted(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("expected no log output for 4xx path, got: %s", buf.String())
+	}
+}
+
+// --- Tracing test helpers ---
+
+func setupTestTracing(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown tracer provider: %v", err)
+		}
+	})
+	return sr
+}
+
+func findSpanAttribute(span sdktrace.ReadOnlySpan, key string) (attribute.Value, bool) {
+	for _, attr := range span.Attributes() {
+		if string(attr.Key) == key {
+			return attr.Value, true
+		}
+	}
+	return attribute.Value{}, false
+}
+
+// --- Deposit tracing tests ---
+
+func TestExecute_ValidDeposit_CreatesSpanWithOutcomeSuccess(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, err := svc.Execute(context.Background(), req)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, status)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name() != "deposit.execute" {
+		t.Errorf("expected span name deposit.execute, got %s", span.Name())
+	}
+	if span.Status().Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "success" {
+		t.Errorf("expected wallet.outcome=success, got %s", outcome.AsString())
+	}
+	orderID, ok := findSpanAttribute(span, "wallet.order_id")
+	if !ok {
+		t.Fatal("expected wallet.order_id attribute")
+	}
+	if orderID.AsString() != req.OrderID {
+		t.Errorf("expected wallet.order_id=%s, got %s", req.OrderID, orderID.AsString())
+	}
+}
+
+func TestExecute_IdempotentReplay_SpanOutcomeReplayed(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+
+	snapshot := DepositResponse{
+		PositionID: uuid.New().String(), ClientID: uuid.New().String(),
+		AssetID: uuid.New().String(), Amount: "100", UnitPrice: "10",
+		TotalValue: "1000", CollateralValue: "0", JudiciaryCollateralValue: "0",
+		PurchasedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	snapshotBytes, _ := json.Marshal(snapshot)
+
+	processedCmds.findByTypeAndOrderIDFn = func(_ context.Context, _, _ string) (*domain.ProcessedCommand, error) {
+		return domain.ReconstructProcessedCommand(
+			uuid.New(), "DEPOSIT", "order-123", uuid.New(), snapshotBytes, time.Now(),
+		), nil
+	}
+
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "replayed" {
+		t.Errorf("expected wallet.outcome=replayed, got %s", outcome.AsString())
+	}
+}
+
+func TestExecute_ValidationFailure_SpanStatusError(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+	req.ClientID = ""
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "failed" {
+		t.Errorf("expected wallet.outcome=failed, got %s", outcome.AsString())
+	}
+}
+
+func TestExecute_InfrastructureError_SpanStatusError(t *testing.T) {
+	sr := setupTestTracing(t)
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	clients.findByIDFn = func(_ context.Context, _ uuid.UUID) (*domain.Client, error) {
+		return nil, errors.New("connection refused")
+	}
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, _, err := svc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "failed" {
+		t.Errorf("expected wallet.outcome=failed, got %s", outcome.AsString())
+	}
+	orderID, ok := findSpanAttribute(span, "wallet.order_id")
+	if !ok {
+		t.Fatal("expected wallet.order_id attribute")
+	}
+	if orderID.AsString() != req.OrderID {
+		t.Errorf("expected wallet.order_id=%s, got %s", req.OrderID, orderID.AsString())
+	}
+}
+
+func TestExecute_MarshalSnapshotError_SpanStatusError(t *testing.T) {
+	original := depositMarshalJSON
+	depositMarshalJSON = func(v any) ([]byte, error) {
+		return nil, errors.New("marshal failed")
+	}
+	t.Cleanup(func() { depositMarshalJSON = original })
+
+	sr := setupTestTracing(t)
+	clients, assets, positions, processedCmds, uow := defaultMocks()
+	svc := buildService(clients, assets, positions, processedCmds, uow)
+	req := validRequest()
+
+	_, status, err := svc.Execute(context.Background(), req)
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, status)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+	outcome, ok := findSpanAttribute(span, "wallet.outcome")
+	if !ok {
+		t.Fatal("expected wallet.outcome attribute")
+	}
+	if outcome.AsString() != "failed" {
+		t.Errorf("expected wallet.outcome=failed, got %s", outcome.AsString())
 	}
 }
