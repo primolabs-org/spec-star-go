@@ -13,7 +13,13 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("application")
 
 const commandTypeDeposit = "DEPOSIT"
 
@@ -67,10 +73,27 @@ func NewDepositService(
 	}
 }
 
+func setSpanError(span trace.Span, outcome string, err error) {
+	span.SetAttributes(attribute.String("wallet.outcome", outcome))
+	span.SetStatus(codes.Error, err.Error())
+	span.RecordError(err)
+}
+
+func setSpanOK(span trace.Span, outcome string) {
+	span.SetAttributes(attribute.String("wallet.outcome", outcome))
+	span.SetStatus(codes.Ok, "")
+}
+
 // Execute validates input, enforces idempotency, creates a position, and persists atomic state.
 func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*DepositResponse, int, error) {
+	ctx, span := tracer.Start(ctx, "deposit.execute")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("wallet.order_id", req.OrderID))
+
 	clientID, assetID, amount, unitPrice, err := validateDepositRequest(req)
 	if err != nil {
+		setSpanError(span, "failed", err)
 		return nil, http.StatusUnprocessableEntity, err
 	}
 
@@ -79,45 +102,62 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 	existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeDeposit, req.OrderID)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		logger.ErrorContext(ctx, "find processed command failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
+		wrappedErr := fmt.Errorf("find processed command: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 	if existing != nil {
 		logger.InfoContext(ctx, "deposit replayed", "order_id", req.OrderID, "outcome", "replayed")
+		setSpanOK(span, "replayed")
 		return deserializeSnapshot(existing.ResponseSnapshot())
 	}
 
 	_, err = s.clients.FindByID(ctx, clientID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
+			clientErr := fmt.Errorf("client not found")
+			setSpanError(span, "failed", clientErr)
+			return nil, http.StatusUnprocessableEntity, clientErr
 		}
 		logger.ErrorContext(ctx, "find client failed", "error", err, "client_id", clientID.String(), "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)
+		wrappedErr := fmt.Errorf("find client: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
 	asset, err := s.assets.FindByID(ctx, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, http.StatusUnprocessableEntity, fmt.Errorf("asset not found")
+			assetErr := fmt.Errorf("asset not found")
+			setSpanError(span, "failed", assetErr)
+			return nil, http.StatusUnprocessableEntity, assetErr
 		}
 		logger.ErrorContext(ctx, "find asset failed", "error", err, "asset_id", assetID.String(), "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("find asset: %w", err)
+		wrappedErr := fmt.Errorf("find asset: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
 	if err := domain.ValidateProductType(asset.ProductType()); err != nil {
-		return nil, http.StatusUnprocessableEntity, fmt.Errorf("unsupported product type")
+		productErr := fmt.Errorf("unsupported product type")
+		setSpanError(span, "failed", productErr)
+		return nil, http.StatusUnprocessableEntity, productErr
 	}
 
 	position, err := domain.NewPosition(clientID, assetID, amount, unitPrice, time.Now().UTC())
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("new position: %w", err)
+		wrappedErr := fmt.Errorf("new position: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
 	resp := toDepositResponse(position)
 
 	snapshotBytes, err := json.Marshal(resp)
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("marshal response snapshot: %w", err)
+		wrappedErr := fmt.Errorf("marshal response snapshot: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
 	err = s.unitOfWork.Do(ctx, func(txCtx context.Context) error {
@@ -138,12 +178,16 @@ func (s *DepositService) Execute(ctx context.Context, req DepositRequest) (*Depo
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrDuplicate) {
+			setSpanOK(span, "replayed")
 			return s.replayAfterRace(ctx, req.OrderID)
 		}
 		logger.ErrorContext(ctx, "unit of work failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)
+		wrappedErr := fmt.Errorf("unit of work: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
+	setSpanOK(span, "success")
 	return resp, http.StatusCreated, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const commandTypeWithdraw = "WITHDRAW"
@@ -66,8 +67,14 @@ func NewWithdrawService(
 }
 
 func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*WithdrawResponse, int, error) {
+	ctx, span := tracer.Start(ctx, "withdraw.execute")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("wallet.order_id", req.OrderID))
+
 	clientID, desiredValue, err := validateWithdrawRequest(req)
 	if err != nil {
+		setSpanError(span, "failed", err)
 		return nil, http.StatusUnprocessableEntity, err
 	}
 
@@ -76,20 +83,27 @@ func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*Wi
 	existing, err := s.processedCommands.FindByTypeAndOrderID(ctx, commandTypeWithdraw, req.OrderID)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		logger.ErrorContext(ctx, "find processed command failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("find processed command: %w", err)
+		wrappedErr := fmt.Errorf("find processed command: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 	if existing != nil {
 		logger.InfoContext(ctx, "withdraw replayed", "order_id", req.OrderID, "outcome", "replayed")
+		setSpanOK(span, "replayed")
 		return deserializeWithdrawSnapshot(existing.ResponseSnapshot())
 	}
 
 	_, err = s.clients.FindByID(ctx, clientID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, http.StatusUnprocessableEntity, fmt.Errorf("client not found")
+			clientErr := fmt.Errorf("client not found")
+			setSpanError(span, "failed", clientErr)
+			return nil, http.StatusUnprocessableEntity, clientErr
 		}
 		logger.ErrorContext(ctx, "find client failed", "error", err, "client_id", clientID.String(), "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("find client: %w", err)
+		wrappedErr := fmt.Errorf("find client: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
 	var resp *WithdrawResponse
@@ -162,21 +176,31 @@ func (s *WithdrawService) Execute(ctx context.Context, req WithdrawRequest) (*Wi
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrDuplicate) {
+			setSpanOK(span, "replayed")
 			return s.replayAfterRace(ctx, req.OrderID)
 		}
 		if errors.Is(err, domain.ErrConcurrencyConflict) {
-			return nil, http.StatusConflict, fmt.Errorf("withdraw: %w", err)
+			wrappedErr := fmt.Errorf("withdraw: %w", err)
+			setSpanError(span, "failed", wrappedErr)
+			return nil, http.StatusConflict, wrappedErr
 		}
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, http.StatusNotFound, fmt.Errorf("withdraw: %w", err)
+			wrappedErr := fmt.Errorf("withdraw: %w", err)
+			setSpanError(span, "failed", wrappedErr)
+			return nil, http.StatusNotFound, wrappedErr
 		}
 		if errors.Is(err, domain.ErrInsufficientPosition) {
-			return nil, http.StatusConflict, fmt.Errorf("withdraw: %w", err)
+			wrappedErr := fmt.Errorf("withdraw: %w", err)
+			setSpanError(span, "failed", wrappedErr)
+			return nil, http.StatusConflict, wrappedErr
 		}
 		logger.ErrorContext(ctx, "unit of work failed", "error", err, "order_id", req.OrderID, "outcome", "failed")
-		return nil, http.StatusInternalServerError, fmt.Errorf("unit of work: %w", err)
+		wrappedErr := fmt.Errorf("unit of work: %w", err)
+		setSpanError(span, "failed", wrappedErr)
+		return nil, http.StatusInternalServerError, wrappedErr
 	}
 
+	setSpanOK(span, "success")
 	return resp, http.StatusOK, nil
 }
 
