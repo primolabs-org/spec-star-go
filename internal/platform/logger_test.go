@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/lambdacontext"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func newTestFactory(buf *bytes.Buffer, service string) *LoggerFactory {
@@ -158,5 +160,154 @@ func TestNewLoggerFactory_PublicConstructor(t *testing.T) {
 	logger := f.FromContext(context.Background(), "http", "op")
 	if logger == nil {
 		t.Fatal("expected non-nil logger from public constructor")
+	}
+}
+
+func TestFromContext_WithRecordingSpan_IncludesTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	tp := sdktrace.NewTracerProvider()
+	t.Cleanup(func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("failed to shutdown tracer provider: %v", err)
+		}
+	})
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "test-span")
+	defer span.End()
+
+	sc := span.SpanContext()
+
+	logger := f.FromContext(ctx, "http", "deposit")
+	buf.Reset()
+	logger.InfoContext(ctx, "test")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	traceID, ok := entry["trace_id"]
+	if !ok {
+		t.Fatal("missing trace_id field")
+	}
+	if traceID != sc.TraceID().String() {
+		t.Errorf("trace_id: got %v, want %v", traceID, sc.TraceID().String())
+	}
+
+	spanID, ok := entry["span_id"]
+	if !ok {
+		t.Fatal("missing span_id field")
+	}
+	if spanID != sc.SpanID().String() {
+		t.Errorf("span_id: got %v, want %v", spanID, sc.SpanID().String())
+	}
+}
+
+func TestFromContext_WithoutSpan_ExcludesTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	logger := f.FromContext(context.Background(), "http", "deposit")
+	buf.Reset()
+	logger.InfoContext(context.Background(), "test")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("expected trace_id to be absent without span")
+	}
+	if _, ok := entry["span_id"]; ok {
+		t.Error("expected span_id to be absent without span")
+	}
+}
+
+func TestFromContext_WithNoopSpan_ExcludesTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	tp := noop.NewTracerProvider()
+	ctx, span := tp.Tracer("test").Start(context.Background(), "test-span")
+	defer span.End()
+
+	logger := f.FromContext(ctx, "http", "deposit")
+	buf.Reset()
+	logger.InfoContext(ctx, "test")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("expected trace_id to be absent with noop span")
+	}
+	if _, ok := entry["span_id"]; ok {
+		t.Error("expected span_id to be absent with noop span")
+	}
+}
+
+func TestSetDefault_WithRecordingSpan_IncludesTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	_ = newTestFactory(&buf, "default-trace-test")
+
+	tp := sdktrace.NewTracerProvider()
+	t.Cleanup(func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("failed to shutdown tracer provider: %v", err)
+		}
+	})
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "test-span")
+	defer span.End()
+
+	sc := span.SpanContext()
+
+	buf.Reset()
+	slog.InfoContext(ctx, "test from default")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	traceID, ok := entry["trace_id"]
+	if !ok {
+		t.Fatal("missing trace_id field in slog.Default() output")
+	}
+	if traceID != sc.TraceID().String() {
+		t.Errorf("trace_id: got %v, want %v", traceID, sc.TraceID().String())
+	}
+
+	spanID, ok := entry["span_id"]
+	if !ok {
+		t.Fatal("missing span_id field in slog.Default() output")
+	}
+	if spanID != sc.SpanID().String() {
+		t.Errorf("span_id: got %v, want %v", spanID, sc.SpanID().String())
+	}
+}
+
+func TestTraceContextHandler_WithGroup_PreservesTraceCorrelation(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	tp := sdktrace.NewTracerProvider()
+	t.Cleanup(func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("failed to shutdown tracer provider: %v", err)
+		}
+	})
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "test-span")
+	defer span.End()
+
+	sc := span.SpanContext()
+
+	logger := f.FromContext(ctx, "http", "deposit").WithGroup("details")
+	buf.Reset()
+	logger.InfoContext(ctx, "test", "key", "value")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	details, ok := entry["details"].(map[string]any)
+	if !ok {
+		t.Fatal("expected 'details' group in output")
+	}
+	if got := details["trace_id"]; got != sc.TraceID().String() {
+		t.Errorf("trace_id in group: got %v, want %v", got, sc.TraceID().String())
+	}
+	if got := details["span_id"]; got != sc.SpanID().String() {
+		t.Errorf("span_id in group: got %v, want %v", got, sc.SpanID().String())
+	}
+	if details["key"] != "value" {
+		t.Errorf("expected details.key=value, got %v", details["key"])
 	}
 }
