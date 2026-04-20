@@ -16,6 +16,13 @@ import (
 func main() {
 	loggers := platform.NewLoggerFactory("spec-star", slog.LevelInfo)
 
+	shutdown, err := platform.InitTelemetry(context.Background())
+	if err != nil {
+		slog.Error("initializing telemetry", "error", err)
+		os.Exit(1)
+	}
+	defer shutdown(context.Background())
+
 	cfg, err := platform.LoadDatabaseConfig()
 	if err != nil {
 		slog.Error("loading database config", "error", err)
