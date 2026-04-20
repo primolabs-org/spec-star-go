@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/aws/aws-lambda-go/lambdacontext"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 type loggerKey struct{}
@@ -25,13 +26,46 @@ func NewLoggerFactory(service string, level slog.Leveler) *LoggerFactory {
 }
 
 func newLoggerFactory(service string, level slog.Leveler, w io.Writer) *LoggerFactory {
-	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	jsonHandler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	handler := traceContextHandler{inner: jsonHandler}
 	base := slog.New(handler).With("service", service)
 	slog.SetDefault(base)
 
 	f := &LoggerFactory{base: base}
 	f.coldStart.Store(true)
 	return f
+}
+
+// traceContextHandler wraps an slog.Handler and injects trace_id and span_id
+// attributes from an active, recording OpenTelemetry span in the context.
+type traceContextHandler struct {
+	inner slog.Handler
+}
+
+func (h traceContextHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h traceContextHandler) Handle(ctx context.Context, record slog.Record) error {
+	span := oteltrace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		sc := span.SpanContext()
+		if sc.IsValid() {
+			record.AddAttrs(
+				slog.String("trace_id", sc.TraceID().String()),
+				slog.String("span_id", sc.SpanID().String()),
+			)
+		}
+	}
+	return h.inner.Handle(ctx, record)
+}
+
+func (h traceContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return traceContextHandler{inner: h.inner.WithAttrs(attrs)}
+}
+
+func (h traceContextHandler) WithGroup(name string) slog.Handler {
+	return traceContextHandler{inner: h.inner.WithGroup(name)}
 }
 
 // FromContext returns a logger enriched with trigger, operation, request_id (from

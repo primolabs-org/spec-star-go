@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/lambdacontext"
+	oteltrace "go.opentelemetry.io/otel/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func newTestFactory(buf *bytes.Buffer, service string) *LoggerFactory {
@@ -158,5 +160,126 @@ func TestNewLoggerFactory_PublicConstructor(t *testing.T) {
 	logger := f.FromContext(context.Background(), "http", "op")
 	if logger == nil {
 		t.Fatal("expected non-nil logger from public constructor")
+	}
+}
+
+func emitAndParseCtx(t *testing.T, logger *slog.Logger, ctx context.Context, buf *bytes.Buffer) map[string]any {
+	t.Helper()
+	buf.Reset()
+	logger.InfoContext(ctx, "test")
+	return parseJSONLine(t, buf.Bytes())
+}
+
+func TestTraceCorrelation_RecordingSpan_IncludesTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	tp := sdktrace.NewTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "test-op")
+	defer span.End()
+
+	logger := f.FromContext(ctx, "http", "deposit")
+	entry := emitAndParseCtx(t, logger, ctx, &buf)
+
+	sc := span.SpanContext()
+	wantTraceID := sc.TraceID().String()
+	wantSpanID := sc.SpanID().String()
+
+	if got := entry["trace_id"]; got != wantTraceID {
+		t.Errorf("trace_id: got %v, want %s", got, wantTraceID)
+	}
+	if got := entry["span_id"]; got != wantSpanID {
+		t.Errorf("span_id: got %v, want %s", got, wantSpanID)
+	}
+}
+
+func TestTraceCorrelation_NoSpan_OmitsTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	logger := f.FromContext(context.Background(), "http", "deposit")
+	entry := emitAndParseCtx(t, logger, context.Background(), &buf)
+
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("expected trace_id to be absent without a span")
+	}
+	if _, ok := entry["span_id"]; ok {
+		t.Error("expected span_id to be absent without a span")
+	}
+}
+
+func TestTraceCorrelation_NoopSpan_OmitsTraceFields(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	noopTP := oteltrace.NewNoopTracerProvider()
+	ctx, span := noopTP.Tracer("test").Start(context.Background(), "noop-op")
+	defer span.End()
+
+	logger := f.FromContext(ctx, "http", "deposit")
+	entry := emitAndParseCtx(t, logger, ctx, &buf)
+
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("expected trace_id to be absent with noop span")
+	}
+	if _, ok := entry["span_id"]; ok {
+		t.Error("expected span_id to be absent with noop span")
+	}
+}
+
+func TestTraceContextHandler_WithGroup_PreservesTraceCorrelation(t *testing.T) {
+	var buf bytes.Buffer
+	f := newTestFactory(&buf, "test-service")
+
+	tp := sdktrace.NewTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "group-op")
+	defer span.End()
+
+	logger := f.base.WithGroup("mygroup")
+	buf.Reset()
+	logger.InfoContext(ctx, "test", "key", "val")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	sc := span.SpanContext()
+
+	group, ok := entry["mygroup"].(map[string]any)
+	if !ok {
+		t.Fatal("expected mygroup group in output")
+	}
+	if got := group["trace_id"]; got != sc.TraceID().String() {
+		t.Errorf("trace_id: got %v, want %s", got, sc.TraceID().String())
+	}
+	if got := group["span_id"]; got != sc.SpanID().String() {
+		t.Errorf("span_id: got %v, want %s", got, sc.SpanID().String())
+	}
+	if group["key"] != "val" {
+		t.Errorf("expected mygroup.key=val, got %v", group["key"])
+	}
+}
+
+func TestSetDefault_InheritsTraceCorrelation(t *testing.T) {
+	var buf bytes.Buffer
+	_ = newTestFactory(&buf, "default-trace-test")
+
+	tp := sdktrace.NewTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "default-op")
+	defer span.End()
+
+	buf.Reset()
+	slog.InfoContext(ctx, "test from default")
+	entry := parseJSONLine(t, buf.Bytes())
+
+	sc := span.SpanContext()
+	if got := entry["trace_id"]; got != sc.TraceID().String() {
+		t.Errorf("trace_id: got %v, want %s", got, sc.TraceID().String())
+	}
+	if got := entry["span_id"]; got != sc.SpanID().String() {
+		t.Errorf("span_id: got %v, want %s", got, sc.SpanID().String())
 	}
 }
