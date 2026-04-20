@@ -13,6 +13,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/application"
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
+	"go.opentelemetry.io/otel/codes"
 )
 
 type mockWithdrawExecutor struct {
@@ -441,4 +442,80 @@ func TestWithdrawHandle_ServiceExecute_ReceivesContextWithLogger(t *testing.T) {
 	if logger == slog.Default() {
 		t.Fatal("expected enriched logger in context, got slog.Default()")
 	}
+}
+
+// --- Withdraw handler span and metric tests ---
+
+func TestWithdrawHandle_Success_CreatesSpanWithAttributes(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockWithdrawExecutor{
+		resp: &application.WithdrawResponse{
+			Positions: []application.PositionDTO{{PositionID: "p1"}},
+		},
+		statusCode: http.StatusOK,
+	}
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name != "POST /withdrawals" {
+		t.Errorf("expected span name %q, got %q", "POST /withdrawals", span.Name)
+	}
+	if span.Status.Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "http.method", "POST")
+	assertSpanAttribute(t, span, "http.route", "/withdrawals")
+	assertSpanAttribute(t, span, "wallet.command", "withdraw")
+	assertSpanAttribute(t, span, "wallet.outcome", "success")
+}
+
+func TestWithdrawHandle_Error_CreatesSpanWithStatusError(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockWithdrawExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "failed")
+}
+
+func TestWithdrawHandle_Success_RecordsCommandCount(t *testing.T) {
+	_, reader := setupTestOTel(t)
+	mock := &mockWithdrawExecutor{
+		resp: &application.WithdrawResponse{
+			Positions: []application.PositionDTO{{PositionID: "p1"}},
+		},
+		statusCode: http.StatusOK,
+	}
+	handler := NewWithdrawHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertCommandCountMetricExists(t, reader)
 }

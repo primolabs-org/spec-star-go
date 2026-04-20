@@ -7,11 +7,18 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/primolabs-org/spec-star-go/internal/application"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type mockDepositExecutor struct {
@@ -444,4 +451,179 @@ func TestHandle_ServiceExecute_ReceivesContextWithLogger(t *testing.T) {
 	if logger == slog.Default() {
 		t.Fatal("expected enriched logger in context, got slog.Default()")
 	}
+}
+
+// --- OTel test infrastructure (shared across all test files in package) ---
+
+var (
+	testSpanExporter *tracetest.InMemoryExporter
+	testMetricReader *sdkmetric.ManualReader
+	initTestOTel     sync.Once
+)
+
+func setupTestOTel(t *testing.T) (*tracetest.InMemoryExporter, *sdkmetric.ManualReader) {
+	t.Helper()
+	initTestOTel.Do(func() {
+		testSpanExporter = tracetest.NewInMemoryExporter()
+		tp := sdktrace.NewTracerProvider(
+			sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(testSpanExporter)),
+		)
+		otel.SetTracerProvider(tp)
+
+		testMetricReader = sdkmetric.NewManualReader()
+		mp := sdkmetric.NewMeterProvider(
+			sdkmetric.WithReader(testMetricReader),
+		)
+		otel.SetMeterProvider(mp)
+	})
+	testSpanExporter.Reset()
+	return testSpanExporter, testMetricReader
+}
+
+func assertSpanAttribute(t *testing.T, span tracetest.SpanStub, key, expected string) {
+	t.Helper()
+	for _, attr := range span.Attributes {
+		if string(attr.Key) == key {
+			if attr.Value.AsString() != expected {
+				t.Errorf("expected attribute %s=%q, got %q", key, expected, attr.Value.AsString())
+			}
+			return
+		}
+	}
+	t.Errorf("attribute %s not found in span", key)
+}
+
+func assertCommandCountMetricExists(t *testing.T, reader *sdkmetric.ManualReader) {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "wallet.command.count" {
+				return
+			}
+		}
+	}
+	t.Error("wallet.command.count metric not found")
+}
+
+// --- Deposit handler span and metric tests ---
+
+func TestHandle_SuccessfulDeposit_CreatesSpanWithStatusOKAndAttributes(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p1"},
+		statusCode: http.StatusCreated,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name != "POST /deposits" {
+		t.Errorf("expected span name %q, got %q", "POST /deposits", span.Name)
+	}
+	if span.Status.Code != codes.Ok {
+		t.Errorf("expected span status OK, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "http.method", "POST")
+	assertSpanAttribute(t, span, "http.route", "/deposits")
+	assertSpanAttribute(t, span, "wallet.command", "deposit")
+	assertSpanAttribute(t, span, "wallet.outcome", "success")
+}
+
+func TestHandle_FailedDeposit_ValidationError_CreatesSpanWithStatusError(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusUnprocessableEntity,
+		err:        errors.New("amount must be positive"),
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "failed")
+}
+
+func TestHandle_FailedDeposit_ServiceError_CreatesSpanWithStatusError(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status.Code)
+	}
+	if span.Status.Description != "db connection lost" {
+		t.Errorf("expected span status description %q, got %q", "db connection lost", span.Status.Description)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "failed")
+}
+
+func TestHandle_IdempotentReplay_SpanOutcomeReplayed(t *testing.T) {
+	exp, _ := setupTestOTel(t)
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p2"},
+		statusCode: http.StatusOK,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	assertSpanAttribute(t, spans[0], "wallet.outcome", "replayed")
+}
+
+func TestHandle_SuccessfulDeposit_RecordsCommandCount(t *testing.T) {
+	_, reader := setupTestOTel(t)
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p1"},
+		statusCode: http.StatusCreated,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertCommandCountMetricExists(t, reader)
 }
