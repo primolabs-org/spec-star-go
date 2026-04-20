@@ -2,12 +2,12 @@
   "feature": "tracing",
   "status": "in-progress",
   "current_phase": "execution",
-  "current_step": "step-003",
+  "current_step": "step-004",
   "steps": {
     "step-001": { "status": "done", "outcome": "success" },
     "step-002": { "status": "done", "outcome": "success" },
-    "step-003": { "status": "in-progress", "outcome": null },
-    "step-004": { "status": "pending", "outcome": null },
+    "step-003": { "status": "done", "outcome": "success" },
+    "step-004": { "status": "in-progress", "outcome": null },
     "step-005": { "status": "pending", "outcome": null },
     "step-006": { "status": "pending", "outcome": null },
     "step-007": { "status": "pending", "outcome": null }
