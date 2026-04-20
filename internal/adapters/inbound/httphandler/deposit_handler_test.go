@@ -7,11 +7,17 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/primolabs-org/spec-star-go/internal/application"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type mockDepositExecutor struct {
@@ -444,4 +450,237 @@ func TestHandle_ServiceExecute_ReceivesContextWithLogger(t *testing.T) {
 	if logger == slog.Default() {
 		t.Fatal("expected enriched logger in context, got slog.Default()")
 	}
+}
+
+func setupTestTracer(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := tracer
+	tracer = tp.Tracer("httphandler")
+	t.Cleanup(func() {
+		tracer = prev
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown tracer provider: %v", err)
+		}
+	})
+	return exporter
+}
+
+func assertSpanAttribute(t *testing.T, span tracetest.SpanStub, key, expected string) {
+	t.Helper()
+	for _, attr := range span.Attributes {
+		if string(attr.Key) == key {
+			if attr.Value.AsString() != expected {
+				t.Errorf("span attribute %q: expected %q, got %q", key, expected, attr.Value.AsString())
+			}
+			return
+		}
+	}
+	t.Errorf("span attribute %q not found", key)
+}
+
+type failingCounterMeter struct {
+	metricnoop.Meter
+}
+
+func (failingCounterMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	return nil, errors.New("counter creation failed")
+}
+
+type failingHistogramMeter struct {
+	metricnoop.Meter
+}
+
+func (failingHistogramMeter) Float64Histogram(string, ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	return nil, errors.New("histogram creation failed")
+}
+
+func TestHandle_SuccessfulDeposit_CreatesSpanWithStatusOK(t *testing.T) {
+	exporter := setupTestTracer(t)
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p1"},
+		statusCode: http.StatusCreated,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", resp.StatusCode)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	span := spans[0]
+	if span.Name != "POST /deposits" {
+		t.Fatalf("expected span name 'POST /deposits', got %q", span.Name)
+	}
+	if span.Status.Code != codes.Ok {
+		t.Fatalf("expected span status OK, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "http.method", "POST")
+	assertSpanAttribute(t, span, "http.route", "/deposits")
+	assertSpanAttribute(t, span, "wallet.command", "deposit")
+	assertSpanAttribute(t, span, "wallet.outcome", "success")
+}
+
+func TestHandle_FailedDeposit_ValidationError_SetsSpanError(t *testing.T) {
+	exporter := setupTestTracer(t)
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusUnprocessableEntity,
+		err:        errors.New("amount must be positive"),
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d", resp.StatusCode)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Fatalf("expected span status Error, got %v", span.Status.Code)
+	}
+	if span.Status.Description != "amount must be positive" {
+		t.Fatalf("expected status description 'amount must be positive', got %q", span.Status.Description)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "failed")
+}
+
+func TestHandle_FailedDeposit_ServiceError_SetsSpanError(t *testing.T) {
+	exporter := setupTestTracer(t)
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("database connection lost"),
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Fatalf("expected span status Error, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "failed")
+}
+
+func TestHandle_IdempotentReplay_SetsOutcomeReplayed(t *testing.T) {
+	exporter := setupTestTracer(t)
+	mock := &mockDepositExecutor{
+		resp:       &application.DepositResponse{PositionID: "p2"},
+		statusCode: http.StatusOK,
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	resp, err := handler.Handle(context.Background(), postRequest(validBody()))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	span := spans[0]
+	if span.Status.Code != codes.Ok {
+		t.Fatalf("expected span status OK, got %v", span.Status.Code)
+	}
+	assertSpanAttribute(t, span, "wallet.outcome", "replayed")
+}
+
+func TestHandle_FailedDeposit_SpanRecordsError(t *testing.T) {
+	exporter := setupTestTracer(t)
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("something broke"),
+	}
+	handler := NewDepositHandler(mock, newMockLoggerFactory())
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	found := false
+	for _, event := range spans[0].Events {
+		if event.Name == "exception" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected error event on span")
+	}
+}
+
+func TestCreateMetrics_CounterCreationFails_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string panic, got %T", r)
+		}
+		if !strings.Contains(msg, "wallet.command.count") {
+			t.Fatalf("expected panic about wallet.command.count, got %q", msg)
+		}
+	}()
+	createMetrics(failingCounterMeter{})
+}
+
+func TestCreateMetrics_HistogramCreationFails_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string panic, got %T", r)
+		}
+		if !strings.Contains(msg, "wallet.command.duration") {
+			t.Fatalf("expected panic about wallet.command.duration, got %q", msg)
+		}
+	}()
+	createMetrics(failingHistogramMeter{})
 }
