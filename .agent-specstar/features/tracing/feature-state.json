@@ -2,10 +2,10 @@
   "feature": "tracing",
   "status": "in-progress",
   "current_phase": "execution",
-  "current_step": "step-001",
+  "current_step": "step-002",
   "steps": {
-    "step-001": { "status": "in-progress", "outcome": null },
-    "step-002": { "status": "pending", "outcome": null },
+    "step-001": { "status": "done", "outcome": "success" },
+    "step-002": { "status": "in-progress", "outcome": null },
     "step-003": { "status": "pending", "outcome": null },
     "step-004": { "status": "pending", "outcome": null },
     "step-005": { "status": "pending", "outcome": null },
@@ -27,6 +27,16 @@
       "step": "step-001",
       "action": "started",
       "timestamp": "2026-04-19T23:52:45Z"
+    },
+    {
+      "step": "step-001",
+      "action": "completed",
+      "timestamp": "2026-04-19T23:55:00Z"
+    },
+    {
+      "step": "step-002",
+      "action": "started",
+      "timestamp": "2026-04-19T23:55:00Z"
     }
   ],
   "last_actor": "SpecStar Manager",

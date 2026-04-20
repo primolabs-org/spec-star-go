@@ -14,7 +14,16 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+
 	loggers := platform.NewLoggerFactory("spec-star", slog.LevelInfo)
+
+	shutdown, err := platform.InitTelemetry(ctx)
+	if err != nil {
+		slog.Error("initializing telemetry", "error", err)
+		os.Exit(1)
+	}
+	defer shutdown(ctx)
 
 	cfg, err := platform.LoadDatabaseConfig()
 	if err != nil {
@@ -22,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	pool, err := platform.NewPool(context.Background(), cfg)
+	pool, err := platform.NewPool(ctx, cfg)
 	if err != nil {
 		slog.Error("creating database pool", "error", err)
 		os.Exit(1)
