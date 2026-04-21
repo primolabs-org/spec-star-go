@@ -18,12 +18,12 @@
     {
       "step": "design",
       "action": "created",
-      "timestamp": "2026-04-19 12:00:00"
+      "timestamp": "2026-04-19T12:00:00-03:00"
     },
     {
       "step": "steps",
       "action": "generated",
-      "timestamp": "2026-04-19 12:00:00"
+      "timestamp": "2026-04-19T12:00:00-03:00"
     },
     {
       "step": "step-001",
