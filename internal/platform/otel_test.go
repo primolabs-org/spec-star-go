@@ -17,7 +17,7 @@ import (
 type noopSpanExporter struct{}
 
 func (noopSpanExporter) ExportSpans(context.Context, []sdktrace.ReadOnlySpan) error { return nil }
-func (noopSpanExporter) Shutdown(context.Context) error                              { return nil }
+func (noopSpanExporter) Shutdown(context.Context) error                             { return nil }
 
 type noopMetricExporter struct{}
 
