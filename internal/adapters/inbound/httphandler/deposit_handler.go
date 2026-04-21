@@ -74,17 +74,17 @@ type loggerFactory interface {
 	FromContext(ctx context.Context, trigger, operation string) *slog.Logger
 }
 
-func logTerminalError(logger *slog.Logger, status int, err error) {
+func logTerminalError(ctx context.Context, logger *slog.Logger, status int, err error) {
 	attrs := []any{
 		"status", status,
 		"error", err.Error(),
 		"outcome", "failed",
 	}
 	if status >= http.StatusInternalServerError {
-		logger.Error("request failed", attrs...)
+		logger.ErrorContext(ctx, "request failed", attrs...)
 		return
 	}
-	logger.Warn("request failed", attrs...)
+	logger.WarnContext(ctx, "request failed", attrs...)
 }
 
 // Handle processes an API Gateway HTTP API v2 request.
@@ -113,7 +113,7 @@ func (h *DepositHandler) Handle(ctx context.Context, req events.APIGatewayV2HTTP
 
 	resp, statusCode, err := h.service.Execute(ctx, depositReq)
 	if err != nil {
-		logTerminalError(logger, statusCode, err)
+		logTerminalError(ctx, logger, statusCode, err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.String("wallet.outcome", "failed"))

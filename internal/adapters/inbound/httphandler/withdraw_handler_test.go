@@ -368,6 +368,23 @@ func TestWithdrawHandle_ServiceReturns500_LogsErrorLevel(t *testing.T) {
 	}
 }
 
+func TestWithdrawHandle_ServiceReturns500_LogsCorrelationFieldsWhenSpanActive(t *testing.T) {
+	setupTestTracer(t)
+	logFactory := newTraceAwareMockLoggerFactory()
+	mock := &mockWithdrawExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewWithdrawHandler(mock, logFactory)
+
+	_, err := handler.Handle(context.Background(), withdrawPostRequest(validWithdrawBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertCorrelationFields(t, logFactory.parseLastEntry(t))
+}
+
 func TestWithdrawHandle_ErrInsufficientPosition_LogsWarnLevel(t *testing.T) {
 	logFactory := newMockLoggerFactory()
 	mock := &mockWithdrawExecutor{

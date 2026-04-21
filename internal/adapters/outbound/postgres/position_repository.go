@@ -39,7 +39,7 @@ func (r *PositionRepository) FindByID(ctx context.Context, positionID uuid.UUID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("position %s: %w", positionID, domain.ErrNotFound)
 		}
-		platform.LoggerFromContext(ctx).Error("FindByID: query failed", "position_id", positionID.String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByID: query failed", "position_id", positionID.String(), "error", err.Error())
 		return nil, fmt.Errorf("querying position %s: %w", positionID, err)
 	}
 	return pos, nil
@@ -52,7 +52,7 @@ func (r *PositionRepository) FindByClientAndAsset(ctx context.Context, clientID,
 		clientID, assetID,
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("FindByClientAndAsset: query failed", "client_id", clientID.String(), "asset_id", assetID.String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByClientAndAsset: query failed", "client_id", clientID.String(), "asset_id", assetID.String(), "error", err.Error())
 		return nil, fmt.Errorf("querying positions for client %s asset %s: %w", clientID, assetID, err)
 	}
 	defer rows.Close()
@@ -83,7 +83,7 @@ func (r *PositionRepository) FindByClientAndInstrument(ctx context.Context, clie
 		clientID, instrumentID,
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("FindByClientAndInstrument: query failed", "client_id", clientID.String(), "instrument_id", instrumentID, "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByClientAndInstrument: query failed", "client_id", clientID.String(), "instrument_id", instrumentID, "error", err.Error())
 		err = fmt.Errorf("querying positions for client %s instrument %s: %w", clientID, instrumentID, err)
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (r *PositionRepository) Create(ctx context.Context, position *domain.Positi
 		position.CreatedAt(), position.UpdatedAt(), position.PurchasedAt(), position.RowVersion(),
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("Create: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Create: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
 		err = fmt.Errorf("inserting position %s: %w", position.PositionID(), err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -130,7 +130,7 @@ func (r *PositionRepository) Update(ctx context.Context, position *domain.Positi
 		position.PositionID(), position.RowVersion()-1,
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("Update: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Update: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
 		err = fmt.Errorf("updating position %s: %w", position.PositionID(), err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

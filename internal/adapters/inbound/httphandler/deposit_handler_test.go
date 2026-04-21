@@ -18,6 +18,7 @@ import (
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type mockDepositExecutor struct {
@@ -35,15 +36,53 @@ func (m *mockDepositExecutor) Execute(ctx context.Context, req application.Depos
 }
 
 type mockLoggerFactory struct {
-	buf *bytes.Buffer
+	buf        *bytes.Buffer
+	traceAware bool
 }
 
 func newMockLoggerFactory() *mockLoggerFactory {
 	return &mockLoggerFactory{buf: &bytes.Buffer{}}
 }
 
+func newTraceAwareMockLoggerFactory() *mockLoggerFactory {
+	return &mockLoggerFactory{buf: &bytes.Buffer{}, traceAware: true}
+}
+
+type traceContextTestHandler struct {
+	inner slog.Handler
+}
+
+func (h *traceContextTestHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h *traceContextTestHandler) Handle(ctx context.Context, record slog.Record) error {
+	span := trace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		sc := span.SpanContext()
+		if sc.IsValid() {
+			record.AddAttrs(
+				slog.String("trace_id", sc.TraceID().String()),
+				slog.String("span_id", sc.SpanID().String()),
+			)
+		}
+	}
+	return h.inner.Handle(ctx, record)
+}
+
+func (h *traceContextTestHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &traceContextTestHandler{inner: h.inner.WithAttrs(attrs)}
+}
+
+func (h *traceContextTestHandler) WithGroup(name string) slog.Handler {
+	return &traceContextTestHandler{inner: h.inner.WithGroup(name)}
+}
+
 func (m *mockLoggerFactory) FromContext(_ context.Context, trigger, operation string) *slog.Logger {
-	handler := slog.NewJSONHandler(m.buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	var handler slog.Handler = slog.NewJSONHandler(m.buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	if m.traceAware {
+		handler = &traceContextTestHandler{inner: handler}
+	}
 	return slog.New(handler).With("trigger", trigger, "operation", operation)
 }
 
@@ -370,6 +409,20 @@ func assertErrorBody(t *testing.T, body string, expectedMsg string) {
 	}
 }
 
+func assertCorrelationFields(t *testing.T, entry map[string]any) {
+	t.Helper()
+
+	traceID, ok := entry["trace_id"].(string)
+	if !ok || traceID == "" {
+		t.Fatalf("expected non-empty trace_id, got %v", entry["trace_id"])
+	}
+
+	spanID, ok := entry["span_id"].(string)
+	if !ok || spanID == "" {
+		t.Fatalf("expected non-empty span_id, got %v", entry["span_id"])
+	}
+}
+
 func TestHandle_ExecuteReturns500_LogsErrorLevel(t *testing.T) {
 	logFactory := newMockLoggerFactory()
 	mock := &mockDepositExecutor{
@@ -400,6 +453,23 @@ func TestHandle_ExecuteReturns500_LogsErrorLevel(t *testing.T) {
 	if entry["outcome"] != "failed" {
 		t.Errorf("expected outcome=failed, got %v", entry["outcome"])
 	}
+}
+
+func TestHandle_ExecuteReturns500_LogsCorrelationFieldsWhenSpanActive(t *testing.T) {
+	setupTestTracer(t)
+	logFactory := newTraceAwareMockLoggerFactory()
+	mock := &mockDepositExecutor{
+		statusCode: http.StatusInternalServerError,
+		err:        errors.New("db connection lost"),
+	}
+	handler := NewDepositHandler(mock, logFactory)
+
+	_, err := handler.Handle(context.Background(), postRequest(validBody()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertCorrelationFields(t, logFactory.parseLastEntry(t))
 }
 
 func TestHandle_ExecuteReturns4xx_LogsWarnLevel(t *testing.T) {

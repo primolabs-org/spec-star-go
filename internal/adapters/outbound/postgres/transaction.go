@@ -32,7 +32,7 @@ func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context)
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("Do: begin transaction failed", "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Do: begin transaction failed", "error", err.Error())
 		err = fmt.Errorf("beginning transaction: %w", err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -52,7 +52,7 @@ func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		platform.LoggerFromContext(ctx).Error("Do: commit transaction failed", "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Do: commit transaction failed", "error", err.Error())
 		err = fmt.Errorf("committing transaction: %w", err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

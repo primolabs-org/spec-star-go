@@ -54,7 +54,7 @@ func (r *ProcessedCommandRepository) FindByTypeAndOrderID(ctx context.Context, c
 			span.RecordError(err)
 			return nil, err
 		}
-		platform.LoggerFromContext(ctx).Error("FindByTypeAndOrderID: query failed", "command_type", commandType, "order_id", orderID, "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByTypeAndOrderID: query failed", "command_type", commandType, "order_id", orderID, "error", err.Error())
 		err = fmt.Errorf("querying processed command (%s, %s): %w", commandType, orderID, err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -84,7 +84,7 @@ func (r *ProcessedCommandRepository) Create(ctx context.Context, cmd *domain.Pro
 			span.RecordError(err)
 			return err
 		}
-		platform.LoggerFromContext(ctx).Error("Create: exec failed", "command_id", cmd.CommandID().String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Create: exec failed", "command_id", cmd.CommandID().String(), "error", err.Error())
 		err = fmt.Errorf("inserting processed command %s: %w", cmd.CommandID(), err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

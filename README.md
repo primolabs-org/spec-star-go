@@ -79,6 +79,17 @@ Four tables defined in `migrations/001_initial_schema.sql`:
 | `DB_MAX_CONN_IDLE_TIME` | No | `30s` | Maximum idle time per connection |
 | `DB_HEALTH_CHECK_PERIOD` | No | `15s` | Pool health check interval |
 
+### OpenTelemetry Environment Variables
+
+The local Docker stack configures OpenTelemetry export through these standard variables:
+
+| Variable | Default (local) | Description |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | `spec-star-wallet` | Service name attached to emitted traces and metrics |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=local,service.version=dev` | Additional resource attributes for telemetry identity |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OTLP gRPC endpoint used by the app to export telemetry |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | OTLP transport protocol |
+
 ## Running Tests
 
 ```bash
@@ -108,16 +119,24 @@ go test ./...
    docker compose up --build
    ```
 
-   This starts two services:
-   - **postgres** — PostgreSQL 16, initialized with the wallet schema and seed data.
-   - **lambda** — The wallet Lambda running behind the AWS Lambda Runtime Interface Emulator (RIE), reachable on host port `9000`.
+   This starts seven services:
+
+   - **postgres** — PostgreSQL 16, initialized with the wallet schema and seed data (`localhost:5432`).
+   - **wallet-api** — The wallet Lambda behind AWS Lambda Runtime Interface Emulator (RIE), reachable on `localhost:9000`.
+   - **otel-collector** — Receives OTLP traces/metrics from `wallet-api` on `localhost:4317`.
+   - **jaeger** — Trace backend and UI, reachable on `http://localhost:16686`.
+   - **loki** — Log backend receiving container logs from Alloy (`localhost:3100`).
+   - **alloy** — Docker log collector that scrapes `wallet-api` container logs and pushes them to Loki.
+   - **grafana** — Observability UI with pre-provisioned Loki and Jaeger datasources, reachable on `http://localhost:3000`.
 
 3. Check service status and logs:
 
    ```bash
    docker compose ps
    docker compose logs
-   docker compose logs lambda
+   docker compose logs wallet-api
+   docker compose logs otel-collector
+   docker compose logs alloy
    docker compose logs postgres
    ```
 
@@ -148,6 +167,50 @@ docker compose down -v
 docker compose up --build
 ```
 
+### Observability Stack
+
+#### Service and Port Reference
+
+| Service | Purpose | Host URL / Port |
+|---|---|---|
+| `wallet-api` | Lambda RIE endpoint for local invocation | `http://localhost:9000` |
+| `postgres` | Persistent storage | `localhost:5432` |
+| `otel-collector` | Receives OTLP telemetry from app | `localhost:4317` |
+| `jaeger` | Trace search and visualization | `http://localhost:16686` |
+| `loki` | Log storage/query backend | `http://localhost:3100` |
+| `alloy` | Docker log collector (no host port exposed) | N/A |
+| `grafana` | Unified observability UI | `http://localhost:3000` |
+
+#### Browse Logs in Grafana Explore
+
+1. Open `http://localhost:3000`.
+2. Go to **Explore**.
+3. Select the **Loki** data source.
+4. Run the query:
+
+    ```logql
+    {container=~".*wallet-api.*"}
+    ```
+
+5. Open a log entry and inspect parsed JSON fields. Records should include `trace_id` and `span_id` for log-trace correlation.
+
+#### Inspect Traces in Jaeger
+
+1. Open `http://localhost:16686`.
+2. Select service `spec-star-wallet`.
+3. Search for operations `POST /deposits` and `POST /withdrawals` after invoking commands.
+4. For each trace, verify handler span plus child spans such as `deposit.execute` / `withdraw.execute` and `db.*` operations.
+
+#### Metrics Limitation in Local Stack
+
+Metrics are emitted by the application and sent to the collector, but this local stack has no Prometheus/Mimir backend. Metric visibility is limited to OTel Collector debug output (`docker compose logs otel-collector`).
+
+#### Known Limitations
+
+- Alloy log collection depends on Docker socket access (`/var/run/docker.sock`). On some host OS setups (for example Docker Desktop variants, rootless Docker, or restricted socket permissions), container discovery may require additional host configuration.
+- This observability stack is for local development only and is not production-ready.
+- Metrics are not queryable in Grafana in this setup because no metrics storage backend is provisioned.
+
 ### Invoking the Lambda Locally
 
 All invocations are HTTP POSTs to the Lambda RIE invoke endpoint:
@@ -157,6 +220,8 @@ POST http://localhost:9000/2015-03-31/functions/function/invocations
 ```
 
 The request body is a JSON-encoded API Gateway HTTP API v2 event. The `body` field inside the envelope must be a **JSON-encoded string** (escaped), not a nested object.
+
+The examples below are valid with the current `wallet-api` service naming and Compose stack.
 
 #### Deposit
 

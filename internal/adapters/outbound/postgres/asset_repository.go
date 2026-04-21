@@ -39,7 +39,7 @@ func (r *AssetRepository) FindByID(ctx context.Context, assetID uuid.UUID) (*dom
 	)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
-			platform.LoggerFromContext(ctx).Error("FindByID: query failed", "asset_id", assetID.String(), "error", err.Error())
+			platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByID: query failed", "asset_id", assetID.String(), "error", err.Error())
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -57,7 +57,7 @@ func (r *AssetRepository) FindByInstrumentID(ctx context.Context, instrumentID s
 	)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
-			platform.LoggerFromContext(ctx).Error("FindByInstrumentID: query failed", "instrument_id", instrumentID, "error", err.Error())
+			platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByInstrumentID: query failed", "instrument_id", instrumentID, "error", err.Error())
 		}
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (r *AssetRepository) Create(ctx context.Context, asset *domain.Asset) error
 		asset.AssetName(), asset.IssuanceDate(), asset.MaturityDate(), asset.CreatedAt(),
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("Create: exec failed", "asset_id", asset.AssetID().String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Create: exec failed", "asset_id", asset.AssetID().String(), "error", err.Error())
 		return fmt.Errorf("inserting asset %s: %w", asset.AssetID(), err)
 	}
 	return nil

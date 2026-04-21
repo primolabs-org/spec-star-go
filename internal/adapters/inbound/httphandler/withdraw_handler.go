@@ -56,7 +56,7 @@ func (h *WithdrawHandler) Handle(ctx context.Context, req events.APIGatewayV2HTT
 
 	resp, statusCode, err := h.service.Execute(ctx, withdrawReq)
 	if err != nil {
-		logTerminalError(logger, statusCode, err)
+		logTerminalError(ctx, logger, statusCode, err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.String("wallet.outcome", "failed"))

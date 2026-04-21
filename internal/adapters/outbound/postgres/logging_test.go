@@ -15,6 +15,9 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // mockTx implements pgx.Tx so it passes the type assertion in executorFromContext.
@@ -76,6 +79,47 @@ func setupTestContext(mock pgx.Tx) (context.Context, *bytes.Buffer) {
 	return ctx, &buf
 }
 
+type traceContextTestHandler struct {
+	inner slog.Handler
+}
+
+func (h *traceContextTestHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h *traceContextTestHandler) Handle(ctx context.Context, record slog.Record) error {
+	span := trace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		sc := span.SpanContext()
+		if sc.IsValid() {
+			record.AddAttrs(
+				slog.String("trace_id", sc.TraceID().String()),
+				slog.String("span_id", sc.SpanID().String()),
+			)
+		}
+	}
+	return h.inner.Handle(ctx, record)
+}
+
+func (h *traceContextTestHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &traceContextTestHandler{inner: h.inner.WithAttrs(attrs)}
+}
+
+func (h *traceContextTestHandler) WithGroup(name string) slog.Handler {
+	return &traceContextTestHandler{inner: h.inner.WithGroup(name)}
+}
+
+func setupTraceAwareTestContext(mock pgx.Tx) (context.Context, *bytes.Buffer) {
+	var buf bytes.Buffer
+	handler := &traceContextTestHandler{inner: slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})}
+	logger := slog.New(handler)
+	ctx := platform.WithLogger(context.Background(), logger)
+	if mock != nil {
+		ctx = context.WithValue(ctx, txKey{}, mock)
+	}
+	return ctx, &buf
+}
+
 // logEntry represents a parsed JSON log line.
 type logEntry struct {
 	Level   string `json:"level"`
@@ -87,7 +131,7 @@ type logEntry struct {
 func parseLogEntries(t *testing.T, buf *bytes.Buffer) []logEntry {
 	t.Helper()
 	var entries []logEntry
-	dec := json.NewDecoder(buf)
+	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
 	for dec.More() {
 		var raw map[string]any
 		if err := dec.Decode(&raw); err != nil {
@@ -138,6 +182,35 @@ func requireNoLogEntry(t *testing.T, buf *bytes.Buffer) {
 	t.Helper()
 	if buf.Len() > 0 {
 		t.Fatalf("expected no log entries, got: %s", buf.String())
+	}
+}
+
+func setupRecordingTracerProvider(t *testing.T) {
+	t.Helper()
+
+	prev := otel.GetTracerProvider()
+	tp := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(tp)
+
+	t.Cleanup(func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown tracer provider: %v", err)
+		}
+		otel.SetTracerProvider(prev)
+	})
+}
+
+func requireCorrelationFields(t *testing.T, entry logEntry) {
+	t.Helper()
+
+	traceID, ok := entry.entries["trace_id"].(string)
+	if !ok || traceID == "" {
+		t.Fatalf("expected non-empty trace_id, got %v", entry.entries["trace_id"])
+	}
+
+	spanID, ok := entry.entries["span_id"].(string)
+	if !ok || spanID == "" {
+		t.Fatalf("expected non-empty span_id, got %v", entry.entries["span_id"])
 	}
 }
 
@@ -488,6 +561,29 @@ func TestLoggingProcessedCommandRepository(t *testing.T) {
 		})
 	})
 
+	t.Run("FindByTypeAndOrderID unexpected error with active span includes trace correlation", func(t *testing.T) {
+		setupRecordingTracerProvider(t)
+
+		mock := &mockTx{
+			queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
+				return &mockRow{scanErr: dbErr}
+			},
+		}
+		ctx, buf := setupTraceAwareTestContext(mock)
+
+		repo := NewProcessedCommandRepository(nil)
+		_, err := repo.FindByTypeAndOrderID(ctx, "deposit", "ORD-TRACE")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+
+		entries := parseLogEntries(t, buf)
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 log entry, got %d: %s", len(entries), buf.String())
+		}
+		requireCorrelationFields(t, entries[0])
+	})
+
 	t.Run("FindByTypeAndOrderID ErrNoRows no log", func(t *testing.T) {
 		mock := &mockTx{
 			queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
@@ -570,6 +666,30 @@ func TestLoggingTransactionRunner(t *testing.T) {
 		requireSingleErrorLog(t, &buf, "Do: begin transaction failed", nil)
 	})
 
+	t.Run("Do begin failure with active span includes trace correlation", func(t *testing.T) {
+		setupRecordingTracerProvider(t)
+		ctx, buf := setupTraceAwareTestContext(nil)
+
+		runner := &TransactionRunner{
+			pool: &mockBeginner{
+				beginFn: func(_ context.Context) (pgx.Tx, error) {
+					return nil, dbErr
+				},
+			},
+		}
+
+		err := runner.Do(ctx, func(_ context.Context) error { return nil })
+		if err == nil {
+			t.Fatal("expected error")
+		}
+
+		entries := parseLogEntries(t, buf)
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 log entry, got %d: %s", len(entries), buf.String())
+		}
+		requireCorrelationFields(t, entries[0])
+	})
+
 	t.Run("Do commit failure logs ERROR", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -589,5 +709,29 @@ func TestLoggingTransactionRunner(t *testing.T) {
 		}
 
 		requireSingleErrorLog(t, &buf, "Do: commit transaction failed", nil)
+	})
+
+	t.Run("Do commit failure with active span includes trace correlation", func(t *testing.T) {
+		setupRecordingTracerProvider(t)
+		ctx, buf := setupTraceAwareTestContext(nil)
+
+		runner := &TransactionRunner{
+			pool: &mockBeginner{
+				beginFn: func(_ context.Context) (pgx.Tx, error) {
+					return &mockTx{commitErr: dbErr}, nil
+				},
+			},
+		}
+
+		err := runner.Do(ctx, func(_ context.Context) error { return nil })
+		if err == nil {
+			t.Fatal("expected error")
+		}
+
+		entries := parseLogEntries(t, buf)
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 log entry, got %d: %s", len(entries), buf.String())
+		}
+		requireCorrelationFields(t, entries[0])
 	})
 }

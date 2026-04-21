@@ -47,7 +47,7 @@ func (r *ClientRepository) FindByID(ctx context.Context, clientID uuid.UUID) (*d
 			span.RecordError(err)
 			return nil, err
 		}
-		platform.LoggerFromContext(ctx).Error("FindByID: query failed", "client_id", clientID.String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "FindByID: query failed", "client_id", clientID.String(), "error", err.Error())
 		err = fmt.Errorf("querying client %s: %w", clientID, err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -66,7 +66,7 @@ func (r *ClientRepository) Create(ctx context.Context, client *domain.Client) er
 		client.ClientID(), client.ExternalID(), client.CreatedAt(),
 	)
 	if err != nil {
-		platform.LoggerFromContext(ctx).Error("Create: exec failed", "client_id", client.ClientID().String(), "error", err.Error())
+		platform.LoggerFromContext(ctx).ErrorContext(ctx, "Create: exec failed", "client_id", client.ClientID().String(), "error", err.Error())
 		return fmt.Errorf("inserting client %s: %w", client.ClientID(), err)
 	}
 	return nil
