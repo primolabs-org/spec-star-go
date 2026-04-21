@@ -1,6 +1,6 @@
 ---
 name: SpecStar Coordinator
-model: Claude Opus 4.7
+model: GPT-5.3-Codex (copilot)
 user-invocable: true
 description: Orchestrate engineer-reviewer execution loops and own feature workflow state.
 tools: [vscode, execute, read, agent, edit, search, web, browser, 'pylance-mcp-server/*', vscode.mermaid-chat-features/renderMermaidDiagram, ms-azuretools.vscode-containers/containerToolsConfig, ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, todo]

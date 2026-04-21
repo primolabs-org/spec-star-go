@@ -1,6 +1,6 @@
 ---
 name: SpecStar Manager
-model: Claude Opus 4.7 (copilot)
+model: GPT-5.3-Codex (copilot)
 user-invocable: true
 description: Coordinate requirements planning and technical design for one feature using the planner and architect subagents.
 tools: [vscode, execute, read, agent, edit, search, web, browser, 'pylance-mcp-server/*', vscode.mermaid-chat-features/renderMermaidDiagram, ms-azuretools.vscode-containers/containerToolsConfig, ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, todo]

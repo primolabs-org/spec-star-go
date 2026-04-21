@@ -9,7 +9,7 @@
     "step-003": { "status": "completed", "outcome": "approved" },
     "step-004": { "status": "completed", "outcome": "approved" },
     "step-005": { "status": "completed", "outcome": "approved" },
-    "step-006": { "status": "pending", "outcome": null },
+    "step-006": { "status": "in-progress", "outcome": null },
     "step-007": { "status": "pending", "outcome": null }
   },
   "history": [
