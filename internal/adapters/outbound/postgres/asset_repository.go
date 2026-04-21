@@ -12,6 +12,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var _ ports.AssetRepository = (*AssetRepository)(nil)
@@ -28,6 +29,9 @@ const assetColumns = `asset_id, instrument_id, product_type, offer_id, emission_
 	issuer_document_id, market_code, asset_name, issuance_date, maturity_date, created_at`
 
 func (r *AssetRepository) FindByID(ctx context.Context, assetID uuid.UUID) (*domain.Asset, error) {
+	ctx, span := startDBSpan(ctx, "db.asset.find_by_id", "SELECT")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 	asset, err := scanAsset(
 		db.QueryRow(ctx, `SELECT `+assetColumns+` FROM assets WHERE asset_id = $1`, assetID),
@@ -37,8 +41,11 @@ func (r *AssetRepository) FindByID(ctx context.Context, assetID uuid.UUID) (*dom
 		if !errors.Is(err, domain.ErrNotFound) {
 			platform.LoggerFromContext(ctx).Error("FindByID: query failed", "asset_id", assetID.String(), "error", err.Error())
 		}
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
 		return nil, err
 	}
+	span.SetStatus(codes.Ok, "")
 	return asset, nil
 }
 

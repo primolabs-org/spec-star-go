@@ -13,6 +13,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var _ ports.PositionRepository = (*PositionRepository)(nil)
@@ -58,7 +59,18 @@ func (r *PositionRepository) FindByClientAndAsset(ctx context.Context, clientID,
 	return collectPositions(rows)
 }
 
-func (r *PositionRepository) FindByClientAndInstrument(ctx context.Context, clientID uuid.UUID, instrumentID string) ([]*domain.Position, error) {
+func (r *PositionRepository) FindByClientAndInstrument(ctx context.Context, clientID uuid.UUID, instrumentID string) (positions []*domain.Position, err error) {
+	ctx, span := startDBSpan(ctx, "db.position.find_by_client_and_instrument", "SELECT")
+	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return
+		}
+		span.SetStatus(codes.Ok, "")
+	}()
+
 	db := executorFromContext(ctx, r.pool)
 	rows, err := db.Query(ctx,
 		`SELECT p.position_id, p.client_id, p.asset_id, p.amount, p.unit_price, p.total_value,
@@ -72,13 +84,18 @@ func (r *PositionRepository) FindByClientAndInstrument(ctx context.Context, clie
 	)
 	if err != nil {
 		platform.LoggerFromContext(ctx).Error("FindByClientAndInstrument: query failed", "client_id", clientID.String(), "instrument_id", instrumentID, "error", err.Error())
-		return nil, fmt.Errorf("querying positions for client %s instrument %s: %w", clientID, instrumentID, err)
+		err = fmt.Errorf("querying positions for client %s instrument %s: %w", clientID, instrumentID, err)
+		return nil, err
 	}
 	defer rows.Close()
+
 	return collectPositions(rows)
 }
 
 func (r *PositionRepository) Create(ctx context.Context, position *domain.Position) error {
+	ctx, span := startDBSpan(ctx, "db.position.create", "INSERT")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 	_, err := db.Exec(ctx,
 		`INSERT INTO positions (`+positionColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
@@ -89,12 +106,19 @@ func (r *PositionRepository) Create(ctx context.Context, position *domain.Positi
 	)
 	if err != nil {
 		platform.LoggerFromContext(ctx).Error("Create: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
-		return fmt.Errorf("inserting position %s: %w", position.PositionID(), err)
+		err = fmt.Errorf("inserting position %s: %w", position.PositionID(), err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
 func (r *PositionRepository) Update(ctx context.Context, position *domain.Position) error {
+	ctx, span := startDBSpan(ctx, "db.position.update", "UPDATE")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 	tag, err := db.Exec(ctx,
 		`UPDATE positions SET amount = $1, unit_price = $2, total_value = $3, collateral_value = $4,
@@ -107,11 +131,18 @@ func (r *PositionRepository) Update(ctx context.Context, position *domain.Positi
 	)
 	if err != nil {
 		platform.LoggerFromContext(ctx).Error("Update: exec failed", "position_id", position.PositionID().String(), "error", err.Error())
-		return fmt.Errorf("updating position %s: %w", position.PositionID(), err)
+		err = fmt.Errorf("updating position %s: %w", position.PositionID(), err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("position %s: %w", position.PositionID(), domain.ErrConcurrencyConflict)
+		err = fmt.Errorf("position %s: %w", position.PositionID(), domain.ErrConcurrencyConflict)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 

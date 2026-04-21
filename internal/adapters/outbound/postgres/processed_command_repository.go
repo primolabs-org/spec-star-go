@@ -13,6 +13,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const pgUniqueViolation = "23505"
@@ -28,6 +29,9 @@ func NewProcessedCommandRepository(pool *pgxpool.Pool) *ProcessedCommandReposito
 }
 
 func (r *ProcessedCommandRepository) FindByTypeAndOrderID(ctx context.Context, commandType, orderID string) (*domain.ProcessedCommand, error) {
+	ctx, span := startDBSpan(ctx, "db.processed_command.find_by_type_and_order_id", "SELECT")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 
 	var (
@@ -45,16 +49,26 @@ func (r *ProcessedCommandRepository) FindByTypeAndOrderID(ctx context.Context, c
 	).Scan(&commandID, &ct, &oid, &clientID, &responseSnapshot, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("processed command (%s, %s): %w", commandType, orderID, domain.ErrNotFound)
+			err = fmt.Errorf("processed command (%s, %s): %w", commandType, orderID, domain.ErrNotFound)
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return nil, err
 		}
 		platform.LoggerFromContext(ctx).Error("FindByTypeAndOrderID: query failed", "command_type", commandType, "order_id", orderID, "error", err.Error())
-		return nil, fmt.Errorf("querying processed command (%s, %s): %w", commandType, orderID, err)
+		err = fmt.Errorf("querying processed command (%s, %s): %w", commandType, orderID, err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return nil, err
 	}
 
+	span.SetStatus(codes.Ok, "")
 	return domain.ReconstructProcessedCommand(commandID, ct, oid, clientID, responseSnapshot, createdAt), nil
 }
 
 func (r *ProcessedCommandRepository) Create(ctx context.Context, cmd *domain.ProcessedCommand) error {
+	ctx, span := startDBSpan(ctx, "db.processed_command.create", "INSERT")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 
 	_, err := db.Exec(ctx,
@@ -65,10 +79,17 @@ func (r *ProcessedCommandRepository) Create(ctx context.Context, cmd *domain.Pro
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
-			return fmt.Errorf("processed command (%s, %s): %w", cmd.CommandType(), cmd.OrderID(), domain.ErrDuplicate)
+			err = fmt.Errorf("processed command (%s, %s): %w", cmd.CommandType(), cmd.OrderID(), domain.ErrDuplicate)
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return err
 		}
 		platform.LoggerFromContext(ctx).Error("Create: exec failed", "command_id", cmd.CommandID().String(), "error", err.Error())
-		return fmt.Errorf("inserting processed command %s: %w", cmd.CommandID(), err)
+		err = fmt.Errorf("inserting processed command %s: %w", cmd.CommandID(), err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }

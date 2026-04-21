@@ -2,14 +2,15 @@
   "feature": "tracing",
   "status": "in-progress",
   "current_phase": "execution",
-  "current_step": "step-006",
+  "current_step": "step-007",
   "steps": {
     "step-001": { "status": "completed", "outcome": "approved" },
     "step-002": { "status": "completed", "outcome": "approved" },
     "step-003": { "status": "completed", "outcome": "approved" },
     "step-004": { "status": "completed", "outcome": "approved" },
     "step-005": { "status": "completed", "outcome": "approved" },
-    "step-006": { "status": "in-progress", "outcome": null },
+    "step-006": { "status": "completed", "outcome": "approved" },
+    "step-006-fix-001": { "status": "completed", "outcome": "approved" },
     "step-007": { "status": "pending", "outcome": null }
   },
   "history": [
@@ -72,13 +73,43 @@
       "step": "step-005",
       "action": "approved",
       "timestamp": "2026-04-19T18:58:00-03:00"
+    },
+    {
+      "step": "step-006",
+      "action": "started",
+      "timestamp": "2026-04-21T14:02:20-03:00"
+    },
+    {
+      "step": "step-006",
+      "action": "rejected",
+      "timestamp": "2026-04-21T14:11:02-03:00"
+    },
+    {
+      "step": "step-006-fix-001",
+      "action": "started",
+      "timestamp": "2026-04-21T14:11:02-03:00"
+    },
+    {
+      "step": "step-006-fix-001",
+      "action": "implemented",
+      "timestamp": "2026-04-21T14:21:21-03:00"
+    },
+    {
+      "step": "step-006-fix-001",
+      "action": "approved",
+      "timestamp": "2026-04-21T14:27:20-03:00"
+    },
+    {
+      "step": "step-006",
+      "action": "approved",
+      "timestamp": "2026-04-21T14:27:20-03:00"
     }
   ],
   "last_actor": "SpecStar Reviewer",
-  "last_artifact": ".agent-specstar/features/tracing/steps/step-003.md",
+  "last_artifact": ".agent-specstar/features/tracing/reviews/step-006-fix-001-review.md",
   "blocked": false,
   "requires_user_input": false,
   "clarifications_open": false,
-  "updated_at": "2026-04-19T18:30:00-03:00",
+  "updated_at": "2026-04-21T14:27:20-03:00",
   "total_execution_time": null
 }

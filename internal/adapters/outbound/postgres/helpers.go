@@ -6,6 +6,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DBTX abstracts the query surface shared by *pgxpool.Pool and pgx.Tx.
@@ -16,6 +19,8 @@ type DBTX interface {
 }
 
 type txKey struct{}
+
+const postgresDBSystem = "postgresql"
 
 func executorFromContext(ctx context.Context, pool *pgxpool.Pool) DBTX {
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
@@ -36,4 +41,15 @@ func stringFromNullable(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func startDBSpan(ctx context.Context, spanName, operation string) (context.Context, trace.Span) {
+	return otel.Tracer("postgres").Start(
+		ctx,
+		spanName,
+		trace.WithAttributes(
+			attribute.String("db.system", postgresDBSystem),
+			attribute.String("db.operation.name", operation),
+		),
+	)
 }

@@ -14,6 +14,7 @@ import (
 func TestAssetRepository_CreateAndFindByID(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	repo := NewAssetRepository(pool)
 
 	asset, err := domain.NewAsset(
@@ -72,6 +73,8 @@ func TestAssetRepository_CreateAndFindByID(t *testing.T) {
 	if !timesEqualMicro(got.CreatedAt(), asset.CreatedAt()) {
 		t.Errorf("created_at: got %v, want %v", got.CreatedAt(), asset.CreatedAt())
 	}
+
+	requireDBSpanSuccess(t, exporter, "db.asset.find_by_id", "SELECT")
 }
 
 func TestAssetRepository_FindByInstrumentID(t *testing.T) {
@@ -94,6 +97,7 @@ func TestAssetRepository_FindByInstrumentID(t *testing.T) {
 func TestAssetRepository_FindByID_NotFound(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	repo := NewAssetRepository(pool)
 
 	_, err := repo.FindByID(ctx, uuid.New())
@@ -103,6 +107,8 @@ func TestAssetRepository_FindByID_NotFound(t *testing.T) {
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
+
+	requireDBSpanError(t, exporter, "db.asset.find_by_id", "SELECT")
 }
 
 func TestAssetRepository_FindByInstrumentID_NotFound(t *testing.T) {

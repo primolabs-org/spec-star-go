@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var _ ports.UnitOfWork = (*TransactionRunner)(nil)
@@ -26,22 +27,37 @@ func NewTransactionRunner(pool *pgxpool.Pool) *TransactionRunner {
 }
 
 func (r *TransactionRunner) Do(ctx context.Context, fn func(ctx context.Context) error) error {
+	ctx, span := startDBSpan(ctx, "db.transaction", "TRANSACTION")
+	defer span.End()
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		platform.LoggerFromContext(ctx).Error("Do: begin transaction failed", "error", err.Error())
-		return fmt.Errorf("beginning transaction: %w", err)
+		err = fmt.Errorf("beginning transaction: %w", err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
 
 	if err := fn(context.WithValue(ctx, txKey{}, tx)); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
-			return errors.Join(err, rbErr)
+			err = errors.Join(err, rbErr)
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return err
 		}
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		platform.LoggerFromContext(ctx).Error("Do: commit transaction failed", "error", err.Error())
-		return fmt.Errorf("committing transaction: %w", err)
+		err = fmt.Errorf("committing transaction: %w", err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return err
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }

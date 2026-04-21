@@ -3,6 +3,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 func TestPositionRepository_CreateAndFindByID(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	clientRepo := NewClientRepository(pool)
 	assetRepo := NewAssetRepository(pool)
 	posRepo := NewPositionRepository(pool)
@@ -71,6 +73,8 @@ func TestPositionRepository_CreateAndFindByID(t *testing.T) {
 	if !timesEqualMicro(got.PurchasedAt(), purchasedAt) {
 		t.Errorf("purchased_at: got %v, want %v", got.PurchasedAt(), purchasedAt)
 	}
+
+	requireDBSpanSuccess(t, exporter, "db.position.create", "INSERT")
 }
 
 func TestPositionRepository_FindByClientAndAsset(t *testing.T) {
@@ -112,6 +116,7 @@ func TestPositionRepository_FindByClientAndAsset(t *testing.T) {
 func TestPositionRepository_FindByClientAndInstrument(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	clientRepo := NewClientRepository(pool)
 	assetRepo := NewAssetRepository(pool)
 	posRepo := NewPositionRepository(pool)
@@ -150,6 +155,25 @@ func TestPositionRepository_FindByClientAndInstrument(t *testing.T) {
 	if got[0].PurchasedAt().After(got[1].PurchasedAt()) {
 		t.Error("positions not ordered by purchased_at ascending")
 	}
+
+	requireDBSpanSuccess(t, exporter, "db.position.find_by_client_and_instrument", "SELECT")
+}
+
+func TestPositionRepository_FindByClientAndInstrument_ContextCanceled(t *testing.T) {
+	pool := testPool(t)
+	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
+	posRepo := NewPositionRepository(pool)
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, err := posRepo.FindByClientAndInstrument(canceledCtx, uuid.New(), "INSTR-CANCELED")
+	if err == nil {
+		t.Fatal("expected error with canceled context")
+	}
+
+	requireDBSpanError(t, exporter, "db.position.find_by_client_and_instrument", "SELECT")
 }
 
 func TestPositionRepository_FindByClientAndInstrument_NoMatches(t *testing.T) {
@@ -166,9 +190,44 @@ func TestPositionRepository_FindByClientAndInstrument_NoMatches(t *testing.T) {
 	}
 }
 
+func TestPositionRepository_Create_DuplicatePositionID(t *testing.T) {
+	pool := testPool(t)
+	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
+	clientRepo := NewClientRepository(pool)
+	assetRepo := NewAssetRepository(pool)
+	posRepo := NewPositionRepository(pool)
+
+	client := createTestClient(t, ctx, clientRepo)
+	asset := createTestAsset(t, ctx, assetRepo, "INSTR-DUP-POS-"+uuid.NewString()[:8])
+
+	pos, err := domain.NewPosition(
+		client.ClientID(),
+		asset.AssetID(),
+		decimal.RequireFromString("100"),
+		decimal.RequireFromString("10"),
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("creating position: %v", err)
+	}
+
+	if err := posRepo.Create(ctx, pos); err != nil {
+		t.Fatalf("first insert should succeed: %v", err)
+	}
+
+	err = posRepo.Create(ctx, pos)
+	if err == nil {
+		t.Fatal("expected duplicate insert error")
+	}
+
+	requireDBSpanError(t, exporter, "db.position.create", "INSERT")
+}
+
 func TestPositionRepository_Update_Success(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	clientRepo := NewClientRepository(pool)
 	assetRepo := NewAssetRepository(pool)
 	posRepo := NewPositionRepository(pool)
@@ -206,11 +265,14 @@ func TestPositionRepository_Update_Success(t *testing.T) {
 	if reloaded.RowVersion() != 2 {
 		t.Errorf("row_version after update: got %d, want 2", reloaded.RowVersion())
 	}
+
+	requireDBSpanSuccess(t, exporter, "db.position.update", "UPDATE")
 }
 
 func TestPositionRepository_Update_ConcurrencyConflict(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	clientRepo := NewClientRepository(pool)
 	assetRepo := NewAssetRepository(pool)
 	posRepo := NewPositionRepository(pool)
@@ -254,6 +316,8 @@ func TestPositionRepository_Update_ConcurrencyConflict(t *testing.T) {
 	if !errors.Is(err, domain.ErrConcurrencyConflict) {
 		t.Errorf("expected ErrConcurrencyConflict, got: %v", err)
 	}
+
+	requireDBSpanError(t, exporter, "db.position.update", "UPDATE")
 }
 
 func TestPositionRepository_FindByID_NotFound(t *testing.T) {
@@ -280,7 +344,7 @@ func TestPositionRepository_DecimalPrecision(t *testing.T) {
 	client := createTestClient(t, ctx, clientRepo)
 	asset := createTestAsset(t, ctx, assetRepo, "INSTR-DEC-"+uuid.NewString()[:8])
 
-	amount := decimal.RequireFromString("123.456789")
+	amount := decimal.RequireFromString("100.000000")
 	unitPrice := decimal.RequireFromString("99.12345678")
 	expectedTotal := amount.Mul(unitPrice)
 

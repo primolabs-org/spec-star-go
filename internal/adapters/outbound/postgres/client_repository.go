@@ -12,6 +12,7 @@ import (
 	"github.com/primolabs-org/spec-star-go/internal/domain"
 	"github.com/primolabs-org/spec-star-go/internal/platform"
 	"github.com/primolabs-org/spec-star-go/internal/ports"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var _ ports.ClientRepository = (*ClientRepository)(nil)
@@ -25,6 +26,9 @@ func NewClientRepository(pool *pgxpool.Pool) *ClientRepository {
 }
 
 func (r *ClientRepository) FindByID(ctx context.Context, clientID uuid.UUID) (*domain.Client, error) {
+	ctx, span := startDBSpan(ctx, "db.client.find_by_id", "SELECT")
+	defer span.End()
+
 	db := executorFromContext(ctx, r.pool)
 
 	var (
@@ -38,12 +42,19 @@ func (r *ClientRepository) FindByID(ctx context.Context, clientID uuid.UUID) (*d
 	).Scan(&id, &externalID, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("client %s: %w", clientID, domain.ErrNotFound)
+			err = fmt.Errorf("client %s: %w", clientID, domain.ErrNotFound)
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return nil, err
 		}
 		platform.LoggerFromContext(ctx).Error("FindByID: query failed", "client_id", clientID.String(), "error", err.Error())
-		return nil, fmt.Errorf("querying client %s: %w", clientID, err)
+		err = fmt.Errorf("querying client %s: %w", clientID, err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return nil, err
 	}
 
+	span.SetStatus(codes.Ok, "")
 	return domain.ReconstructClient(id, externalID, createdAt), nil
 }
 

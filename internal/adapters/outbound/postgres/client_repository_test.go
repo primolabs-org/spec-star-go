@@ -13,6 +13,7 @@ import (
 func TestClientRepository_CreateAndFindByID(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	repo := NewClientRepository(pool)
 
 	client, err := domain.NewClient("EXT-ROUNDTRIP")
@@ -37,11 +38,14 @@ func TestClientRepository_CreateAndFindByID(t *testing.T) {
 	if !timesEqualMicro(got.CreatedAt(), client.CreatedAt()) {
 		t.Errorf("created_at: got %v, want %v", got.CreatedAt(), client.CreatedAt())
 	}
+
+	requireDBSpanSuccess(t, exporter, "db.client.find_by_id", "SELECT")
 }
 
 func TestClientRepository_FindByID_NotFound(t *testing.T) {
 	pool := testPool(t)
 	ctx := withTestTx(t, pool)
+	exporter := setupPostgresTestTracer(t)
 	repo := NewClientRepository(pool)
 
 	_, err := repo.FindByID(ctx, uuid.New())
@@ -51,6 +55,8 @@ func TestClientRepository_FindByID_NotFound(t *testing.T) {
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
+
+	requireDBSpanError(t, exporter, "db.client.find_by_id", "SELECT")
 }
 
 func TestClientRepository_CreateDuplicate(t *testing.T) {
